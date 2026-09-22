@@ -1,0 +1,9 @@
+# deps
+node_modules/
+# wrangler local state
+.wrangler/
+# secrets — never commit
+.env
+.env.*
+# scratch
+_*.log

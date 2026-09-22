@@ -1,0 +1,500 @@
+/**
+ * ATLAS PROXY — Cloudflare Worker edition (edge, HTTPS, 24/7, zero cold-start).
+ *
+ * This is the SAME OpenAI-compatible gateway as the local atlas-core proxy and
+ * the VPS proxy, but it runs on Cloudflare's edge so EVERY platform (Perplexity,
+ * NovaDevs, and every future one) reaches it over HTTPS with one proxy key.
+ *
+ * Free-first routing (Owner 2026-09-18):
+ *   chat:  Cloudflare Workers AI (@cf/qwen/qwen3-30b-a3b-fp8, FREE) → DeepSeek
+ *          V4 Pro → Alibaba Qwen → Gemini (paid only as last resort)
+ *   image: Alibaba Qwen Image
+ *   audio: Azure neural TTS (Ava/Athina, multi-language)
+ *
+ * Endpoints: /health, /v1/models, /v1/chat/completions, /v1/images/generations,
+ *            /v1/audio/speech
+ * Auth: Authorization: Bearer <ATLAS_PROXY_KEY>
+ */
+const FREE_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8"; // Cloudflare Workers AI (free tier)
+const DEEPSEEK = "https://api.deepseek.com";
+const DEEPSEEK_MODEL = "deepseek-v4-pro";
+const ALIBABA_CHAT = "https://dashscope-intl.aliyuncs.com/compatible-mode";
+const ALIBABA_MODEL = "qwen3.8-max";
+const GEMINI = "https://generativelanguage.googleapis.com/v1beta/models";
+const GEMINI_MODEL = "gemini-2.5-flash";
+const MAX_CONTINUATIONS = 12;
+const CONTRACT_VERSION = "v1"; // frozen proxy contract (Stability Lock §4r) — bump only on explicit Owner unlock
+
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+};
+
+function json(obj, status = 200) {
+  return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", ...CORS } });
+}
+
+function authorized(req, env) {
+  // Per-platform keys (F5): single ATLAS_PROXY_KEY still works (back-compat),
+  // and an optional PLATFORM_KEYS JSON map {platform: key} lets every platform
+  // carry its own key so one client's rotation never affects the others.
+  const keys = new Set();
+  if (env.ATLAS_PROXY_KEY) keys.add(String(env.ATLAS_PROXY_KEY));
+  try {
+    const pk = env.PLATFORM_KEYS;
+    if (pk) {
+      const map = typeof pk === "string" ? JSON.parse(pk) : pk;
+      if (map && typeof map === "object") for (const v of Object.values(map)) if (v) keys.add(String(v));
+    }
+  } catch { /* ignore malformed PLATFORM_KEYS */ }
+  if (!keys.size) return false;
+  const h = String(req.headers.get("Authorization") || "");
+  const m = h.match(/^Bearer\s+(.+)$/i);
+  const got = m ? m[1].trim() : new URL(req.url).searchParams.get("key");
+  return Boolean(got) && keys.has(got);
+}
+
+// ── User-Understanding Intelligence (inlined from empathy.js — zero deps) ──
+// localization-skip:begin — multilingual language/emotion detection keyword
+// lists (Greek "μαλακία", "θυμωμένος", …) are RUNTIME dictionaries, not
+// product copy. The UI-Localization bot must not flag these.
+function detectLanguage(text) {
+  const s = String(text || "");
+  if (!s.trim()) return "en";
+  const ranges = [
+    ["el", /[\u0370-\u03FF\u1F00-\u1FFF]/g], ["ru", /[\u0400-\u04FF]/g],
+    ["ar", /[\u0600-\u06FF]/g], ["he", /[\u0590-\u05FF]/g],
+    ["zh", /[\u4E00-\u9FFF]/g], ["ja", /[\u3040-\u30FF]/g],
+    ["ko", /[\uAC00-\uD7AF\u1100-\u11FF]/g], ["hi", /[\u0900-\u097F]/g],
+    ["th", /[\u0E00-\u0E7F]/g],
+  ];
+  let best = null, bestCount = 0;
+  for (const [code, re] of ranges) {
+    const m = s.match(re);
+    if (m && m.length > bestCount) { best = code; bestCount = m.length; }
+  }
+  if (best) return best;
+  const low = " " + s.toLowerCase() + " ";
+  const fp = (words) => words.reduce((n, w) => n + (low.includes(w) ? 1 : 0), 0);
+  const scores = [
+    ["el", fp([" και ", " είναι ", " που ", " να ", " δεν ", " για ", " το ", " την ", " ένα ", " μου "])],
+    ["en", fp([" the ", " and ", " is ", " you ", " what ", " how ", " can ", " to ", " of ", " i ", " a "])],
+    ["de", fp([" und ", " der ", " die ", " das ", " ich ", " nicht ", " ist ", " wie ", " ein ", " zu "])],
+    ["fr", fp([" le ", " la ", " les ", " et ", " est ", " je ", " vous ", " que ", " merci ", " pas "])],
+    ["es", fp([" el ", " la ", " los ", " las ", " y ", " es ", " cómo ", " no ", " para ", " ahora "])],
+    ["it", fp([" il ", " lo ", " la ", " che ", " è ", " non ", " come ", " per "])],
+    ["pt", fp([" o ", " a ", " os ", " e ", " é ", " não ", " como ", " você ", " para "])],
+    ["nl", fp([" de ", " het ", " een ", " en ", " is ", " niet ", " ik ", " wat "])],
+    ["pl", fp([" i ", " jest ", " nie ", " jak ", " co ", " się ", " to "])],
+    ["tr", fp([" ve ", " bir ", " bu ", " için ", " nasıl ", " ne ", " ben "])],
+    ["sv", fp([" och ", " är ", " inte ", " jag ", " vad ", " hur ", " det "])],
+  ];
+  let bestLang = "en", bestScore = 0;
+  for (const [code, sc] of scores) if (sc > bestScore) { bestScore = sc; bestLang = code; }
+  return bestScore > 0 ? bestLang : "en";
+}
+
+function detectEmotion(text) {
+  const s = String(text || "");
+  const t = s.trim();
+  if (!t) return "neutral";
+  const low = t.toLowerCase();
+  const hasLatin = (re) => re.test(t);
+  const hasAny = (list) => list.some((w) => low.includes(w));
+  const profanityLatin = /\b(fuck|fucking|shit|bitch|asshole|damn|hell|crap|stupid|idiot|moron|dumb|useless|garbage|trash|broken|crashed|terrible|awful|worst|ridiculous|waste of time)\b/i;
+  const profanityAny = ["malakia", "μαλακία", "μαλακίες", "σκατά", "ηλίθιο", "χάλια", "απαράδεκτο", "βλακεία", "βλακείες", "merde", "putain", "scheiße", "verdammt", "mierda", "coño", "joder", "cazzo", "kurwa", "blyat", "гавно", "дурак"];
+  if (profanityLatin.test(t) || hasAny(profanityAny)) return "anger";
+  const letters = (t.match(/[A-Za-zΑ-Ωα-ω]/g) || []).length;
+  const caps = (t.match(/[A-ZΑ-Ω]/g) || []).length;
+  if (letters > 8 && caps / letters > 0.6) return "anger";
+  if (/[!]{2,}/.test(t)) return "frustration";
+  if (/[?]{3,}/.test(t)) return "frustration";
+  if (hasLatin(/\b(angry|pissed|mad|furious|hate|fed up|sick of|tired of|annoyed|outraged)\b/i)) return "anger";
+  if (hasAny(["θυμωμένος", "νευριασμένος", "οργισμένος", "νεύρα", "μισώ", "βαρέθηκα", "αηδία"])) return "anger";
+  if (hasLatin(/\b(not working|doesn't work|won't work|doesnt work|still not|again|tried|failed|keeps|broken|error|bug|stuck|can't|cant|unable|why won't)\b/i)) return "frustration";
+  if (hasAny(["δεν δουλεύει", "δεν λειτουργεί", "ξανά", "προσπάθησα", "κόλλησε", "σφάλμα", "δεν μπορώ", "γιατί δεν", "πάλι", "κολλάει"])) return "frustration";
+  if (hasLatin(/\b(confused|don't understand|dont understand|what do you mean|how do i|how does|explain|unclear|not sure|help me understand)\b/i)) return "confusion";
+  if (hasAny(["δεν καταλαβαίνω", "τι εννοείς", "εξήγησε", "μπερδεμένος", "τι σημαίνει", "βοήθησέ με", "verstehe nicht", "no entiendo", "ne comprends pas"])) return "confusion";
+  if (hasLatin(/\b(urgent|asap|immediately|right now|emergency|hurry|quick|fast|today|deadline)\b/i)) return "urgency";
+  if (hasAny(["επείγον", "αμέσως", "τώρα", "γρήγορα", "άμεσα", "βιάζομαι", "σήμερα", "προθεσμία", "ahora mismo", "sofort", "maintenant"])) return "urgency";
+  if (hasLatin(/\b(complaint|unacceptable|disappointed|disappointing|poor service|bad service|refund|chargeback|done with)\b/i)) return "complaint";
+  if (hasAny(["παράπονο", "απογοητευμένος", "απογοήτευση", "κακή εξυπηρέτηση", "επιστροφή χρημάτων"])) return "complaint";
+  if (hasLatin(/\b(thanks|thank you|great|awesome|perfect|excellent|amazing|love it|nice|good job|well done|works|finally|merci|gracias|danke)\b/i)) return "positive";
+  if (hasAny(["ευχαριστώ", "τέλεια", "υπέροχα", "άριστα", "καταπληκτικό", "μπράβο", "επιτέλους", "δουλεύει"])) return "positive";
+  return "neutral";
+}
+
+function detectLoop(historyTexts) {
+  const arr = Array.isArray(historyTexts) ? historyTexts : [];
+  const userMsgs = arr.map((m) => String(m || "").trim().toLowerCase()).filter(Boolean);
+  if (userMsgs.length < 2) return false;
+  const last = userMsgs[userMsgs.length - 1];
+  if (last.length < 4) return false;
+  let same = 0;
+  for (let i = userMsgs.length - 1; i >= 0 && same < 3; i--) {
+    if (userMsgs[i] === last || (userMsgs[i].length > 4 && last.includes(userMsgs[i].slice(0, Math.min(20, userMsgs[i].length))))) same++;
+    else break;
+  }
+  return same >= 2;
+}
+
+function emotionDirective(text, language, historyTexts) {
+  const state = detectEmotion(text);
+  const lang = language || detectLanguage(text);
+  const langLine = lang && lang !== "en"
+    ? `The user is writing in language code "${lang}". Answer in that same language.`
+    : `Answer in the user's language.`;
+  const base = `USER STATE GUIDANCE (apply tone only — never change facts, never lie):
+${langLine}
+Stay respectful and calm at all times. If the user is impolite, do not mirror it — stay warm, professional, and solution-focused. Never use mock/demo/placeholder data; give real, verifiable answers.`;
+  switch (state) {
+    case "anger": return `${base}\nThe user is angry or using harsh language. DO NOT over-apologize or say "I understand your frustration" (that sounds fake). Instead: (1) acknowledge the specific problem in ONE short sentence, (2) immediately take a concrete action or give the exact next step, (3) keep it short and calm. De-escalate by solving, not by emotional filler. Never mirror the anger.`;
+    case "frustration": return `${base}\nThe user is frustrated (something did not work). Skip small talk. Acknowledge briefly, then move straight to problem-solving: give the concrete fix or the exact next step now. If you cannot resolve it, say what they should do next clearly. No "sorry to hear that" filler.`;
+    case "confusion": return `${base}\nThe user is confused. Simplify. Break the answer into short, clear steps. Ask ONE focused clarifying question only if genuinely needed to proceed. Avoid jargon; define any technical term you must use.`;
+    case "urgency": return `${base}\nThe user needs this fast. Match their pace: lead with the most important answer first, skip pleasantries, keep it tight. Give the key info immediately, then details only if needed.`;
+    case "complaint": return `${base}\nThe user is complaining and wants to be heard. Acknowledge plainly without performing ("That should not have happened."), then state exactly what you can do about it and the next step. Do not be defensive.`;
+    case "positive": return `${base}\nThe user is pleased. Be warm and brief. Thank them once, confirm the outcome, and offer the natural next step without overdoing it.`;
+    default: return `${base}\nMatch the user's tone and pace. Be direct, clear, and genuinely helpful. If anything is ambiguous, ask one short clarifying question rather than guessing.`;
+  }
+}
+
+function applyEmpathy(messages) {
+  const userTexts = messages.filter((m) => m.role === "user").map((m) => (typeof m.content === "string" ? m.content : "")).filter(Boolean);
+  if (!userTexts.length) return messages;
+  const lastUser = userTexts[userTexts.length - 1];
+  const history = userTexts.slice(0, -1);
+  const language = detectLanguage(lastUser);
+  const state = detectEmotion(lastUser);
+  const loop = detectLoop(history);
+  if (state === "neutral" && language === "en" && !loop) return messages;
+  return [{ role: "system", content: emotionDirective(lastUser, language, history) }, ...messages];
+}
+// localization-skip:end
+
+// ── AI routes (free-first) ────────────────────────────────────────────────
+async function workersAiChat(env, messages) {
+  if (!env.AI) return null;
+  try {
+    const inputs = {
+      messages: messages.map((m) => ({
+        role: m.role === "assistant" ? "assistant" : m.role === "system" ? "system" : "user",
+        content: typeof m.content === "string" ? m.content.slice(0, 8000) : String(m.content || "").slice(0, 8000),
+      })),
+    };
+    const out = await env.AI.run(FREE_MODEL, inputs);
+    const content = typeof out === "string" ? out : out?.response;
+    return content ? { content: String(content).trim(), engine: "workers-ai", model: FREE_MODEL, finishReason: "stop" } : null;
+  } catch {
+    return null;
+  }
+}
+
+// Normalize caller model aliases to real DeepSeek ids. Perplexity/NovaDevs send
+// "standard" (or omit it); the DeepSeek API only accepts deepseek-v4-pro /
+// deepseek-flash. Without this, an alias like "standard" is rejected and the
+// route silently falls to a model that truncates code (Owner 2026-09-18).
+function normalizeDeepseekModel(m) {
+  const id = String(m || "");
+  if (id === "deepseek-flash" || id === "deepseek-v4-flash" || id === "deepseek-chat" || id === "deepseek-v3.2") return "deepseek-flash";
+  return DEEPSEEK_MODEL; // "standard", "deepseek-v4-pro", "deepseek-reasoner", anything else
+}
+
+async function deepseekChat(env, messages, opts = {}) {
+  const key = env.DEEPSEEK_API_KEY;
+  if (!key) return null;
+  try {
+    const body = { model: normalizeDeepseekModel(opts.model), messages, temperature: opts.temperature ?? 0.6, max_tokens: opts.maxTokens || 8192 };
+    if (opts.jsonMode) body.response_format = { type: "json_object" };
+    body.thinking = { type: opts.thinking ? "enabled" : "disabled" };
+    const res = await fetch(`${DEEPSEEK}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(60000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const choice = data?.choices?.[0];
+    const content = choice?.message?.content;
+    return content ? { content: String(content).trim(), engine: "deepseek", model: body.model, finishReason: choice?.finish_reason === "length" ? "length" : "stop" } : null;
+  } catch { return null; }
+}
+
+async function alibabaChat(env, messages) {
+  const key = env.ALIBABA_API_KEY;
+  if (!key) return null;
+  try {
+    const res = await fetch(`${ALIBABA_CHAT}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({ model: ALIBABA_MODEL, messages, temperature: 0.6, max_tokens: 8192 }),
+      signal: AbortSignal.timeout(60000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const choice = data?.choices?.[0];
+    const content = choice?.message?.content;
+    return content ? { content: String(content).trim(), engine: "alibaba", model: ALIBABA_MODEL, finishReason: choice?.finish_reason === "length" ? "length" : "stop" } : null;
+  } catch { return null; }
+}
+
+async function geminiChat(env, messages) {
+  const key = env.GEMINI_API_KEY;
+  if (!key) return null;
+  const parts = messages.filter((m) => m.role === "user" || m.role === "system" || m.role === "assistant")
+    .map((m) => ({ text: typeof m.content === "string" ? m.content : "" })).filter((p) => p.text);
+  if (!parts.length) return null;
+  try {
+    const res = await fetch(`${GEMINI}/${GEMINI_MODEL}:generateContent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+      body: JSON.stringify({ contents: parts.map((p) => ({ role: "user", parts: [p] })) }),
+      signal: AbortSignal.timeout(60000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const candidate = data?.candidates?.[0];
+    const text = candidate?.content?.parts?.map((p) => p.text ?? "").join("").trim();
+    return text ? { content: text, engine: "gemini", model: GEMINI_MODEL, finishReason: candidate?.finishReason === "MAX_TOKENS" ? "length" : "stop" } : null;
+  } catch { return null; }
+}
+
+async function chatCompletion(env, body) {
+  const messages = Array.isArray(body?.messages) ? body.messages : [];
+  if (!messages.length) return { status: 400, body: { error: { message: "messages required" } } };
+  const baseMessages = applyEmpathy(messages);
+
+  // DeepSeek-compatible flags (NovaDevs builder sends these). JSON mode and
+  // thinking skip the free Workers-AI tier (it has no json/thinking support)
+  // and go straight to DeepSeek V4 Pro — same contract as api.deepseek.com.
+  const jsonMode = body?.response_format?.type === "json_object";
+  const thinking = body?.thinking?.type === "enabled";
+  const opts = { jsonMode, thinking, maxTokens: body?.max_tokens, temperature: body?.temperature, model: body?.model };
+
+  // Build/long-form detection (Owner 2026-09-18): the free Workers AI model
+  // truncates long code and reports finish_reason "stop" (so the continuation
+  // loop never fires and the user gets a HALF app). For build/code/app/game
+  // requests we skip the free tier and go straight to DeepSeek V4 Pro, which
+  // reports finish_reason="length" correctly and lets the loop keep writing
+  // until the artifact is complete.
+  const lastUser = [...baseMessages].reverse().find((m) => m.role === "user");
+  const lastText = typeof lastUser?.content === "string" ? lastUser.content : "";
+  // NOTE: JavaScript \b is ASCII-only, so Greek build words must be matched as
+  // plain substrings (no \b). English words keep \b. A build/code/game request
+  // in ANY language must skip the free truncating model and go to DeepSeek.
+  const wantsBuild =
+    /\b(build|create|make|write|generate|code|app|game|website|dashboard|landing|html|site|write me|build me|make me)\b/i.test(lastText) ||
+    /(φτιάξε|κατασκεύασε|δημιούργησε|γράψε|κάνε|χτίσε|παιχνίδι|εφαρμογή|ιστοσελίδα|ιστοσελίδας|Tetris|calculator|todo|snake|pong)/i.test(lastText);
+
+  // JSON mode = single structured shot (no continuation), like the local proxy.
+  if (jsonMode) {
+    const route = await deepseekChat(env, baseMessages, opts);
+    if (!route) return { status: 502, body: { error: { message: "all_ai_routes_failed" } } };
+    return {
+      status: 200,
+      body: {
+        id: `atlas_${Date.now().toString(36)}`,
+        object: "chat.completion",
+        created: Math.floor(Date.now() / 1000),
+        model: `atlas-proxy/${route.engine}`,
+        choices: [{ index: 0, message: { role: "assistant", content: route.content }, finish_reason: route.finishReason }],
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        atlas_engine: route.engine,
+      },
+    };
+  }
+
+  let full = "", engine = null, model = null, finishReason = "stop";
+  for (let i = 0; i <= MAX_CONTINUATIONS; i++) {
+    const batch = i === 0 ? baseMessages : [...baseMessages, { role: "assistant", content: full }, { role: "user", content: "Continue exactly where you left off. Do not repeat anything already written." }];
+    const route = thinking
+      ? await deepseekChat(env, batch, opts)
+      : (wantsBuild ? null : await workersAiChat(env, batch))
+        ?? await deepseekChat(env, batch, opts)
+        ?? await alibabaChat(env, batch)
+        ?? await geminiChat(env, batch);
+    if (!route) break;
+    engine = route.engine;
+    model = route.model;
+    full += route.content;
+    finishReason = route.finishReason === "length" ? "length" : "stop";
+    if (finishReason !== "length") break;
+  }
+  if (!full) return { status: 502, body: { error: { message: "all_ai_routes_failed" } } };
+  return {
+    status: 200,
+    body: {
+      id: `atlas_${Date.now().toString(36)}`,
+      object: "chat.completion",
+      created: Math.floor(Date.now() / 1000),
+      model: `atlas-proxy/${engine}`,
+      choices: [{ index: 0, message: { role: "assistant", content: full }, finish_reason: finishReason }],
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      atlas_engine: engine,
+    },
+  };
+}
+
+async function imageGeneration(env, body) {
+  const prompt = String(body?.prompt ?? "").trim();
+  if (!prompt) return { status: 400, body: { error: { message: "prompt required" } } };
+  // Qwen image generation takes 30-90s — longer than a Cloudflare Worker can
+  // hold a single dashscope subrequest (it hit the wall-clock cap and the
+  // "thumbnail" QA test kept aborting with a timeout). The Atlas VPS has no
+  // such cap and already exposes /v1/images/generations, so forward there —
+  // same key, same contract as mediaForward.
+  const raw = String(env.VPS_MEDIA_URL || env.VPS_TTS_URL || "http://204.168.146.194:8790").replace(/\/+$/, "");
+  const vpsBase = raw.replace(/\/v1\/audio\/speech$/, "");
+  try {
+    const res = await fetch(`${vpsBase}/v1/images/generations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.ATLAS_PROXY_KEY || ""}` },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(300_000),
+    });
+    const data = await res.json().catch(() => ({}));
+    return { status: res.status, body: data };
+  } catch (e) {
+    console.error(`[atlas-proxy] image gen VPS failed: ${e?.name || "error"} ${e?.message || e}`);
+    return { status: 502, body: { error: { message: "image_vps_unavailable" } } };
+  }
+}
+
+const AZURE_VOICE_BY_LANG = {
+  "en-US": "en-US-AvaNeural", "el-GR": "el-GR-AthinaNeural", "zh-CN": "zh-CN-XiaoxiaoNeural",
+  "es-ES": "es-ES-ElviraNeural", "fr-FR": "fr-FR-DeniseNeural", "de-DE": "de-DE-KatjaNeural",
+  "it-IT": "it-IT-ElsaNeural", "pt-BR": "pt-BR-FranciscaNeural", "ru-RU": "ru-RU-SvetlanaNeural",
+  "ja-JP": "ja-JP-NanamiNeural", "ko-KR": "ko-KR-SunHiNeural", "ar-SA": "ar-SA-ZariyahNeural",
+  "he-IL": "he-IL-HilaNeural", "hi-IN": "hi-IN-SwaraNeural", "th-TH": "th-TH-PremwadeeNeural",
+  "tr-TR": "tr-TR-EmelNeural", "nl-NL": "nl-NL-ColetteNeural", "pl-PL": "pl-PL-ZofiaNeural",
+  "sv-SE": "sv-SE-SofieNeural",
+};
+function azureVoice(lang) {
+  const l = String(lang || "en-US");
+  if (AZURE_VOICE_BY_LANG[l]) return AZURE_VOICE_BY_LANG[l];
+  return "en-US-AvaNeural";
+}
+function escXml(t) {
+  return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+async function speech(env, body) {
+  const text = String(body?.input ?? body?.text ?? "").trim();
+  if (!text) return { status: 400, body: { error: { message: "input required" } } };
+  const lang = String(body?.lang || "en-US");
+  const voice = body?.voice ? String(body.voice) : azureVoice(lang);
+
+  // 1) Azure neural TTS (house voice Ava) — only if a valid key is present.
+  const key = env.AZURE_SPEECH_KEY;
+  if (key) {
+    const region = String(env.AZURE_SPEECH_REGION || "northeurope");
+    const ssml = `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="${escXml(lang)}"><voice name="${escXml(voice)}">${escXml(text)}</voice></speak>`;
+    try {
+      const res = await fetch(`https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`, {
+        method: "POST",
+        headers: { "Ocp-Apim-Subscription-Key": key, "Content-Type": "application/ssml+xml", "X-Microsoft-OutputFormat": "audio-24khz-48kbitrate-mono-mp3", "User-Agent": "AtlasProxy" },
+        body: ssml,
+        signal: AbortSignal.timeout(30000),
+      });
+      if (res.ok) {
+        const buf = new Uint8Array(await res.arrayBuffer());
+        if (buf.length >= 200) return { status: 200, engine: "azure", voice, raw: buf, mime: "audio/mpeg" };
+      }
+    } catch { /* fall through to free Edge TTS */ }
+  }
+
+  // 2) FREE Edge neural TTS via the Atlas VPS (same Ava/Athina voices, zero cost,
+  //    no Azure key). The VPS runs edge-tts 7.2.8 and serves /v1/audio/speech.
+  try {
+    const vpsUrl = String(env.VPS_TTS_URL || "http://204.168.146.194:8790/v1/audio/speech");
+    const res = await fetch(vpsUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.ATLAS_PROXY_KEY || ""}` },
+      body: JSON.stringify({ text: text.slice(0, 5000), voice, lang }),
+      signal: AbortSignal.timeout(60000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.audio) {
+        const buf = Uint8Array.from(atob(data.audio.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+        if (buf.length >= 200) return { status: 200, engine: "edge", voice: data.voice || voice, raw: buf, mime: data.format === "mp3" ? "audio/mpeg" : "audio/wav" };
+      }
+      console.error(`[atlas-proxy] edge-tts VPS no audio: ${JSON.stringify(data).slice(0, 200)}`);
+    } else {
+      console.error(`[atlas-proxy] edge-tts VPS HTTP ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`);
+    }
+  } catch (e) {
+    console.error(`[atlas-proxy] edge-tts VPS fetch failed: ${e?.name || "error"} ${e?.message || e}`);
+  }
+
+  return { status: 502, body: { error: { message: "tts_backend_unavailable" } } };
+}
+
+// ── Deterministic media pipeline (forward to Atlas VPS, where FFmpeg lives) ──
+// Cloudflare Workers cannot run FFmpeg, so image/video/audio editing is served
+// by the Atlas VPS proxy (Node + FFmpeg 6.1 + libass). Same key, same contract.
+async function mediaForward(env, path, body) {
+  // VPS_MEDIA_URL is the clean base (http://host:8790). If only VPS_TTS_URL is
+  // set (ends with /v1/audio/speech), derive the base by stripping that suffix.
+  const raw = String(env.VPS_MEDIA_URL || env.VPS_TTS_URL || "http://204.168.146.194:8790").replace(/\/+$/, "");
+  const vpsBase = raw.replace(/\/v1\/audio\/speech$/, "");
+  const vpsPath = path.replace(/^\/v2\//, "/v1/"); // /v2 aliases forward to the VPS /v1 contract
+  const res = await fetch(`${vpsBase}${vpsPath}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.ATLAS_PROXY_KEY || ""}` },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(300_000),
+  });
+  const data = await res.json().catch(() => ({}));
+  return { status: res.status, body: data };
+}
+
+const MODELS = {
+  object: "list",
+  data: [
+    { id: "atlas-proxy/free", object: "model", owned_by: "atlas", created: 0 },
+    { id: "atlas-proxy/standard", object: "model", owned_by: "atlas", created: 0 },
+    { id: "atlas-proxy/genius", object: "model", owned_by: "atlas", created: 0 },
+  ],
+};
+
+export default {
+  async fetch(req, env) {
+    const url = new URL(req.url);
+    const path = url.pathname.replace(/\/+$/, "") || "/";
+    const started = Date.now();
+    if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
+    if (path === "/health") return json({ ok: true, service: "atlas-proxy", contract_version: CONTRACT_VERSION, time: new Date().toISOString() });
+    if (path === "/v1/models" || path === "/v2/models") return json({ ...MODELS, contract_version: CONTRACT_VERSION, api_version: path.split("/")[1] });
+    if (!authorized(req, env)) { console.log(`[atlas-proxy] ${path} 401`); return json({ error: { message: "invalid_atlas_proxy_key" } }, 401); }
+
+    if ((path === "/v1/chat/completions" || path === "/v2/chat/completions" || path === "/chat/completions" || path === "/v1/free/chat/completions") && req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      const out = await chatCompletion(env, body);
+      console.log(`[atlas-proxy] POST ${path} ${out.status} engine=${out.body?.atlas_engine || "n/a"} ${Date.now() - started}ms`);
+      return json(out.body, out.status);
+    }
+    if ((path === "/v1/images/generations" || path === "/v2/images/generations") && req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      const out = await imageGeneration(env, body);
+      console.log(`[atlas-proxy] POST /v1/images/generations ${out.status} ${Date.now() - started}ms`);
+      return json(out.body, out.status);
+    }
+    if ((path === "/v1/audio/speech" || path === "/v2/audio/speech") && req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      const out = await speech(env, body);
+      if (out.raw) {
+        return new Response(out.raw, { status: 200, headers: { "Content-Type": out.mime || "audio/mpeg", ...CORS } });
+      }
+      return json(out.body, out.status);
+    }
+    if (["/v1/media/inspect", "/v2/media/inspect", "/v1/images/edits", "/v2/images/edits", "/v1/video/process", "/v2/video/process", "/v1/audio/process", "/v2/audio/process", "/v1/media/transcribe", "/v2/media/transcribe", "/v1/media/remove-background", "/v2/media/remove-background", "/v1/media/ocr", "/v2/media/ocr", "/v1/media/qr", "/v2/media/qr", "/v1/media/palette", "/v2/media/palette", "/v1/media/face-blur", "/v2/media/face-blur", "/v1/media/color-isolate", "/v2/media/color-isolate", "/v1/media/vision", "/v2/media/vision", "/v1/media/generative-edit", "/v2/media/generative-edit"].includes(path) && req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      const out = await mediaForward(env, path, body);
+      console.log(`[atlas-proxy] POST ${path} ${out.status} ${Date.now() - started}ms`);
+      return json(out.body, out.status);
+    }
+    console.log(`[atlas-proxy] ${req.method} ${path} 404`);
+    return json({ error: { message: "not_found" } }, 404);
+  },
+};
