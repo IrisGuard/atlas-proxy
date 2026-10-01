@@ -449,6 +449,20 @@ async function mediaForward(env, path, body) {
   return { status: res.status, body: data };
 }
 
+// Arsenal tools relay → Atlas VPS → atlas-tools runner (75 local tools, 24/7).
+async function arsenalForward(env, path, method, body) {
+  const raw = String(env.VPS_MEDIA_URL || env.VPS_TTS_URL || "http://204.168.146.194:8790").replace(/\/+$/, "");
+  const vpsBase = raw.replace(/\/v1\/audio\/speech$/, "");
+  const res = await fetch(`${vpsBase}${path}`, {
+    method,
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.ATLAS_PROXY_KEY || ""}` },
+    body: method === "POST" ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(300_000),
+  });
+  const data = await res.json().catch(() => ({}));
+  return { status: res.status, body: data };
+}
+
 const MODELS = {
   object: "list",
   data: [
@@ -456,6 +470,42 @@ const MODELS = {
     { id: "atlas-proxy/standard", object: "model", owned_by: "atlas", created: 0 },
     { id: "atlas-proxy/genius", object: "model", owned_by: "atlas", created: 0 },
   ],
+};
+
+// ── Capability registry (Owner 2026-09-28) ────────────────────────────────
+// Single source of truth for "what can the Atlas system do, and WHERE does it
+// run". Every platform asks the proxy this (unauthenticated, metadata only —
+// no secrets, no keys) so it knows exactly which abilities are available 24/7
+// (edge/vps) vs. which need the Owner's PC on (local builder). This is how
+// "one unified system" is described to the platforms it serves.
+const CAPABILITIES = {
+  contract_version: CONTRACT_VERSION,
+  tiers: {
+    edge: { name: "Cloudflare Edge", availability: "24/7", note: "light AI chat (free-first) + TTS + routing/auth — no filesystem/Docker/FFmpeg" },
+    vps: { name: "Atlas VPS (Hetzner)", availability: "24/7", note: "heavy compute: FFmpeg media + Python intelligence + sandbox + keyless search + free Ollama" },
+    tools: { name: "Atlas Tools (atlas-tools cx33)", availability: "24/7", note: "75 arsenal tools (crawl/QA/security/SEO/OSINT/media/code/Web3) — deterministic, zero tokens" },
+    local: { name: "Owner PC (builder)", availability: "only while the PC is on", note: "20-agent fleet + 43-bot squadron" },
+  },
+  abilities: {
+    chat: { tier: ["edge", "vps"], freeFirst: true, route: "Workers AI (free) → DeepSeek V4 Pro → Qwen → Gemini", endpoint: "/v1/chat/completions" },
+    tts: { tier: ["edge", "vps"], freeFirst: true, route: "Azure Ava/Athina → Edge TTS (free)", endpoint: "/v1/audio/speech" },
+    image: { tier: ["vps"], route: "Qwen Image", endpoint: "/v1/images/generations" },
+    media: { tier: ["vps"], route: "FFmpeg edit/video/audio", endpoint: "/v1/images/edits · /v1/video/process · /v1/audio/process" },
+    transcribe: { tier: ["vps"], route: "Whisper (faster-whisper)", endpoint: "/v1/media/transcribe" },
+    ocr: { tier: ["vps"], route: "Tesseract", endpoint: "/v1/media/ocr" },
+    qr: { tier: ["vps"], route: "pyzbar", endpoint: "/v1/media/qr" },
+    palette: { tier: ["vps"], route: "Pillow", endpoint: "/v1/media/palette" },
+    faceBlur: { tier: ["vps"], route: "OpenCV", endpoint: "/v1/media/face-blur" },
+    colorIsolate: { tier: ["vps"], route: "OpenCV", endpoint: "/v1/media/color-isolate" },
+    removeBg: { tier: ["vps"], route: "rembg", endpoint: "/v1/media/remove-background" },
+    vision: { tier: ["vps"], route: "Gemini vision", endpoint: "/v1/media/vision" },
+    generativeEdit: { tier: ["vps"], route: "Gemini image edit", endpoint: "/v1/media/generative-edit" },
+    python: { tier: ["vps"], route: "sandbox (stdlib)", endpoint: "/v1/python/run" },
+    search: { tier: ["vps"], route: "keyless Wikipedia + DDG", endpoint: "/v1/search" },
+    agents: { tier: ["local"], route: "20-agent fleet (strategist router)", endpoint: "local only" },
+    bots: { tier: ["local"], route: "43-bot squadron (deterministic/build/ai/external)", endpoint: "local only" },
+    tools: { tier: ["tools"], route: "75 arsenal tools via atlas-tools-runner", endpoint: "/v1/arsenal · /v1/arsenal/run" },
+  },
 };
 
 export default {
@@ -466,6 +516,7 @@ export default {
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
     if (path === "/health") return json({ ok: true, service: "atlas-proxy", contract_version: CONTRACT_VERSION, time: new Date().toISOString() });
     if (path === "/v1/models" || path === "/v2/models") return json({ ...MODELS, contract_version: CONTRACT_VERSION, api_version: path.split("/")[1] });
+    if (path === "/v1/capabilities" || path === "/v2/capabilities" || path === "/capabilities") return json({ ok: true, service: "atlas-proxy", ...CAPABILITIES });
     if (!authorized(req, env)) { console.log(`[atlas-proxy] ${path} 401`); return json({ error: { message: "invalid_atlas_proxy_key" } }, 401); }
 
     if ((path === "/v1/chat/completions" || path === "/v2/chat/completions" || path === "/chat/completions" || path === "/v1/free/chat/completions") && req.method === "POST") {
@@ -492,6 +543,22 @@ export default {
       const body = await req.json().catch(() => ({}));
       const out = await mediaForward(env, path, body);
       console.log(`[atlas-proxy] POST ${path} ${out.status} ${Date.now() - started}ms`);
+      return json(out.body, out.status);
+    }
+    // Arsenal tools relay → Atlas VPS → atlas-tools (75 local tools, 24/7).
+    if (path === "/v1/arsenal" && req.method === "GET") {
+      const out = await arsenalForward(env, path, "GET");
+      console.log(`[atlas-proxy] GET /v1/arsenal ${out.status} ${Date.now() - started}ms`);
+      return json(out.body, out.status);
+    }
+    if (path === "/v1/arsenal/run" && req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      const out = await arsenalForward(env, path, "POST", body);
+      console.log(`[atlas-proxy] POST /v1/arsenal/run ${out.status} ${Date.now() - started}ms`);
+      return json(out.body, out.status);
+    }
+    if (/^\/v1\/arsenal\/[^/]+$/.test(path) && req.method === "GET") {
+      const out = await arsenalForward(env, path, "GET");
       return json(out.body, out.status);
     }
     console.log(`[atlas-proxy] ${req.method} ${path} 404`);
