@@ -501,12 +501,149 @@ const CAPABILITIES = {
     vision: { tier: ["vps"], route: "Gemini vision", endpoint: "/v1/media/vision" },
     generativeEdit: { tier: ["vps"], route: "Gemini image edit", endpoint: "/v1/media/generative-edit" },
     python: { tier: ["vps"], route: "sandbox (stdlib)", endpoint: "/v1/python/run" },
-    search: { tier: ["vps"], route: "keyless Wikipedia + DDG", endpoint: "/v1/search" },
+    search: { tier: ["edge", "vps"], route: "edge Bing+DDG scrape (edge) / Wikipedia + DDG (vps)", endpoint: "/v1/search" },
     agents: { tier: ["local"], route: "20-agent fleet (strategist router)", endpoint: "local only" },
     bots: { tier: ["local"], route: "43-bot squadron (deterministic/build/ai/external)", endpoint: "local only" },
     tools: { tier: ["tools"], route: "75 arsenal tools via atlas-tools-runner", endpoint: "/v1/arsenal · /v1/arsenal/run" },
   },
 };
+
+// ── Edge web search (Bing + DDG scrape) ───────────────────────────────────
+// Runs on Cloudflare's edge (residential-grade egress that search engines do
+// NOT block, unlike the VPS's Hetzner datacenter IP). Returns real destination
+// URLs for the Nova Outreach global lead harvester. No key required.
+const SEARCH_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+
+function decodeEntities(s) {
+  return String(s || "")
+    .replace(/&amp;/g, "&").replace(/&#38;/g, "&").replace(/&lt;/g, "<").replace(/&#60;/g, "<")
+    .replace(/&gt;/g, ">").replace(/&#62;/g, ">").replace(/&quot;/g, '"').replace(/&#34;/g, '"')
+    .replace(/&#39;/g, "'").replace(/&apos;/g, "'").replace(/&nbsp;/g, " ");
+}
+function stripTags(s) {
+  return String(s || "").replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").trim();
+}
+function cleanUrl(u) {
+  try {
+    const x = new URL(u);
+    return (x.protocol === "http:" || x.protocol === "https:") ? x.toString() : "";
+  } catch { return ""; }
+}
+function resolveDdg(u) {
+  const m = String(u || "").match(/[?&]uddg=([^&]+)/i);
+  if (m) { try { return decodeURIComponent(m[1]); } catch { return u; } }
+  return u.startsWith("//") ? "https:" + u : u;
+}
+function decodeBing(u) {
+  const m = String(u || "").match(/[?&]u=([^&]+)/i);
+  if (!m) return "";
+  try {
+    let b = m[1].replace(/-/g, "+").replace(/_/g, "/");
+    while (b.length % 4) b += "=";
+    return cleanUrl(Buffer.from(b, "base64").toString("utf8"));
+  } catch { return ""; }
+}
+
+function parseAnchorHrefs(html, re, mapper, limit) {
+  const out = [];
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const url = mapper(m[1]);
+    const title = stripTags(decodeEntities(m[2]));
+    if (url && title) out.push({ title, url });
+  }
+  return out.slice(0, limit);
+}
+
+async function bingResults(query, limit) {
+  const html = await (await fetch(`https://www.bing.com/search?q=${encodeURIComponent(query)}&count=${Math.max(10, limit)}&setlang=en&mkt=en-US`, {
+    headers: { "User-Agent": SEARCH_UA, Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8", "Accept-Language": "en-US,en;q=0.9" },
+    redirect: "follow", signal: AbortSignal.timeout(15000),
+  })).text();
+  let out = parseAnchorHrefs(html, /<li class="b_algo"[\s\S]*?<h2[^>]*><a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (raw) => {
+    const r = decodeEntities(raw);
+    return /bing\.com\/ck\/a/i.test(r) ? decodeBing(r) : cleanUrl(r);
+  }, limit);
+  if (!out.length) {
+    // Bing changed class name — generic <h2><a> result pattern.
+    out = parseAnchorHrefs(html, /<h2[^>]*><a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (raw) => {
+      const r = decodeEntities(raw);
+      return /bing\.com\/ck\/a/i.test(r) ? decodeBing(r) : cleanUrl(r);
+    }, limit).filter((x) => !/bing\.com|microsoft|msn\.com|go\.microsoft/i.test(x.url));
+  }
+  return out;
+}
+
+async function ddgResults(query, limit) {
+  // DDG Lite is a minimal HTML endpoint that is far less likely to be blocked.
+  const html = await (await fetch(`https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`, {
+    headers: { "User-Agent": SEARCH_UA, Accept: "text/html", "Accept-Language": "en-US,en;q=0.9" },
+    redirect: "follow", signal: AbortSignal.timeout(15000),
+  })).text();
+  let out = parseAnchorHrefs(html, /<a[^>]*class="[^"]*result-link[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (raw) => cleanUrl(resolveDdg(decodeEntities(raw))), limit);
+  if (!out.length) {
+    // html.duckduckgo.com fallback (result__a).
+    const html2 = await (await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+      headers: { "User-Agent": SEARCH_UA, Accept: "text/html", "Accept-Language": "en-US,en;q=0.9" },
+      redirect: "follow", signal: AbortSignal.timeout(15000),
+    })).text();
+    out = parseAnchorHrefs(html2, /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (raw) => cleanUrl(resolveDdg(decodeEntities(raw))), limit);
+  }
+  return out;
+}
+
+async function mojeekResults(query, limit) {
+  const html = await (await fetch(`https://www.mojeek.com/search?q=${encodeURIComponent(query)}`, {
+    headers: { "User-Agent": SEARCH_UA, Accept: "text/html", "Accept-Language": "en-US,en;q=0.9" },
+    redirect: "follow", signal: AbortSignal.timeout(15000),
+  })).text();
+  return parseAnchorHrefs(html, /<a[^>]+class="[^"]*ob[^"]*"[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (raw) => cleanUrl(decodeEntities(raw)), limit);
+}
+
+async function qwantResults(query, limit) {
+  const html = await (await fetch(`https://www.qwant.com/?q=${encodeURIComponent(query)}&t=web&count=${limit}`, {
+    headers: { "User-Agent": SEARCH_UA, Accept: "text/html", "Accept-Language": "en-US,en;q=0.9" },
+    redirect: "follow", signal: AbortSignal.timeout(15000),
+  })).text();
+  // Qwant result links carry data-url attributes with the real destination.
+  const out = [];
+  const re = /<a[^>]+data-url="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const url = cleanUrl(decodeEntities(m[1]));
+    const title = stripTags(decodeEntities(m[2]));
+    if (url && title && out.length < limit) out.push({ title, url });
+  }
+  return out;
+}
+
+async function edgeWebSearch(env, query, limit) {
+  // Try each engine until one returns results (Cloudflare egress is shared, so
+  // any single engine can rate-limit — rotate across independent indexes).
+  const attempts = [
+    () => bingResults(query, limit),
+    () => ddgResults(query, limit),
+    () => mojeekResults(query, limit),
+    () => qwantResults(query, limit),
+  ];
+  for (let i = 0; i < attempts.length; i++) {
+    try {
+      const r = await attempts[i]();
+      if (r && r.length) return r;
+    } catch { /* next engine */ }
+  }
+  // Optional SearXNG backend if configured (aggregates many engines, keyless).
+  if (env.SEARXNG_URL) {
+    try {
+      const r = await (await fetch(`${env.SEARXNG_URL}?q=${encodeURIComponent(query)}&format=json`, {
+        headers: { "User-Agent": SEARCH_UA }, signal: AbortSignal.timeout(15000),
+      })).json();
+      const results = (r?.results || []).filter((x) => x?.url).map((x) => ({ title: x.title || x.url, url: x.url })).slice(0, limit);
+      if (results.length) return results;
+    } catch { /* empty */ }
+  }
+  return [];
+}
 
 export default {
   async fetch(req, env) {
@@ -518,6 +655,17 @@ export default {
     if (path === "/v1/models" || path === "/v2/models") return json({ ...MODELS, contract_version: CONTRACT_VERSION, api_version: path.split("/")[1] });
     if (path === "/v1/capabilities" || path === "/v2/capabilities" || path === "/capabilities") return json({ ok: true, service: "atlas-proxy", ...CAPABILITIES });
     if (!authorized(req, env)) { console.log(`[atlas-proxy] ${path} 401`); return json({ error: { message: "invalid_atlas_proxy_key" } }, 401); }
+
+    // Edge web search (Bing + DDG scrape) — GET /v1/search?q=...&limit=10
+    if ((path === "/v1/search" || path === "/v2/search") && (req.method === "GET" || req.method === "POST")) {
+      const body = req.method === "POST" ? await req.json().catch(() => ({})) : {};
+      const q = String(url.searchParams.get("q") || body?.q || body?.query || "").trim();
+      const limit = Math.min(20, Math.max(1, Number(url.searchParams.get("limit") || body?.limit || 10)));
+      if (!q) return json({ error: { message: "q required" } }, 400);
+      const results = await edgeWebSearch(env, q, limit);
+      console.log(`[atlas-proxy] ${req.method} /v1/search n=${results.length} ${Date.now() - started}ms`);
+      return json({ ok: true, query: q, results, engine: "edge-bing+ddg" });
+    }
 
     if ((path === "/v1/chat/completions" || path === "/v2/chat/completions" || path === "/chat/completions" || path === "/v1/free/chat/completions") && req.method === "POST") {
       const body = await req.json().catch(() => ({}));
