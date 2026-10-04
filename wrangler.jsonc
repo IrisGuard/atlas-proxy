@@ -25,6 +25,6 @@
   //   ATLAS_PROXY_KEY   — bearer key every platform uses to call Atlas (same key as VPS proxy)
   //   DEEPSEEK_API_KEY  — DeepSeek V4 Pro (strategist) + paid chat
   //   ALIBABA_API_KEY   — Qwen chat + image generation
-    20|  //   GEMINI_API_KEY    — Gemini fallback chat
+  //   GEMINI_API_KEY    — Gemini fallback chat
   //   AZURE_SPEECH_KEY / AZURE_SPEECH_REGION — neural TTS (optional)
 }

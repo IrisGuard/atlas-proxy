@@ -594,7 +594,7 @@ const CAPABILITIES = {
     edge: { name: "Cloudflare Edge", availability: "24/7", note: "light AI chat (free-first) + TTS + routing/auth — no filesystem/Docker/FFmpeg" },
     vps: { name: "Atlas VPS (Hetzner)", availability: "24/7", note: "heavy compute: FFmpeg media + Python intelligence + sandbox + keyless search + free Ollama" },
     tools: { name: "Atlas Tools (atlas-tools cx33)", availability: "24/7", note: "75 arsenal tools (crawl/QA/security/SEO/OSINT/media/code/Web3) — deterministic, zero tokens" },
-    local: { name: "Owner PC (builder)", availability: "only while the PC is on", note: "20-agent fleet + 43-bot squadron" },
+    local: { name: "Owner PC (builder)", availability: "only while the PC is on", note: "primary cockpit/builder — agents+bots run 24/7 on VPS (bot-bridge :8793)" },
   },
   abilities: {
     chat: { tier: ["edge", "vps"], freeFirst: true, route: "Workers AI (free) → DeepSeek V4 Pro → Qwen → Gemini", endpoint: "/v1/chat/completions" },

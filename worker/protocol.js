@@ -70,7 +70,7 @@ PAID AI (DeepSeek Flash → Pro → Qwen → Gemini)  ← ΜΟΝΟ ό,τι δε�
 | **Cloudflare edge** | \`atlas-proxy\` worker | chat (free-first) · TTS · auth (PLATFORM_KEYS) · edge search · relay → VPS |
 | **VPS-1** \`204.168.146.194\` | \`:8790\` media proxy · \`:8888\` SearXNG · \`:4381\` Nova Outreach (+4 fill loops + tunnel) · \`:8789\` remote-runner (G13 agents) · \`:11235\` Crawl4AI · Ollama (phi4-mini, llama3.2:3b, qwen3:1.7b) · Meta Brain ingest | FFmpeg/Whisper/OCR/Python · search · email outreach · cloud agents · crawl · local AI |
 | **VPS-2** \`2.28.137.247\` | \`:8791\` 75 εργαλεία · \`:8792\` Automation Engine (21 node types, 4 workflows) · Ollama (qwen3:1.7b, gemma3:4b, qwen3:8b) | arsenal tools · N8n-style automations · local AI |
-| **PC (Atlas)** ⚠️ | Face \`:8080\` · Core \`:8788\` · NovaDevs \`:4321\` | **20 agents + 43 bots** (ΟΧΙ 24/7 — μόνο όταν το PC είναι ανοιχτό) |
+| **PC (Atlas)** ⚠️ | Face \`:8080\` · Core \`:8788\` · NovaDevs \`:4321\` | **primary cockpit/builder** — οι agents+bots τρέχουν 24/7 στο VPS (bot-bridge \`:8793\`) |
 
 **Κρίσιμο (honesty):** 75 εργαλεία + automations + media + Outreach = **24/7 στο VPS**. Οι **20 agents + 43 bots** είναι **ΠΛΕΟΝ 24/7 στο VPS** μέσω του \`atlas-bot-bridge\` :8793 (Law 252) — η εκτέλεση των agents γίνεται με DeepSeek μέσω \`remote-runner\` :8789. Το PC (Atlas) παραμένει το primary cockpit/builder.
 
@@ -134,7 +134,7 @@ PAID AI (DeepSeek Flash → Pro → Qwen → Gemini)  ← ΜΟΝΟ ό,τι δε�
 - **Media/Image:** Cloudflare ΔΕΝ τρέχει FFmpeg → πάει στο VPS-1 (μεγάλο timeout 300s).
 - **Search:** Bing → DDG → Mojeek → Qwant → SearXNG (rotation, κανένα index δεν μπλοκάρει μόνιμα).
 - **Όριο ημερήσιο/μηνιαίο:** όταν πέσει free AI, το proxy πέφτει στο επόμενο tier **αυτόματα**.
-  Το "κάτι να μας ενημερώσει" (alerting) είναι Φάση Γ του roadmap (§8).
+  Το "κάτι να μας ενημερώσει" (alerting) = το Harris Hub προβάλλει VPS problems (Φάση Γ ✅, Law 252).
 
 ## 7. ΤΙ ΔΕΝ ΚΑΝΕΙ ΠΟΤΕ (honesty — no lies)
 
