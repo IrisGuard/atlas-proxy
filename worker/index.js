@@ -58,6 +58,62 @@ function authorized(req, env) {
   return Boolean(got) && keys.has(got);
 }
 
+// ── Phase D: scaling — static cache + per-key rate limit (Owner 2026-10-04) ─
+// Static metadata endpoints are cached at module scope (per-isolate). The rate
+// limiter is a sliding 60s window per platform key; it uses KV
+// (env.RATE_LIMIT_KV) when bound — otherwise per-isolate memory (honest: that
+// resets on deploy/cold start, so bind RATE_LIMIT_KV for real cross-colos).
+
+const STATIC_CACHE = new Map();
+const STATIC_TTL = 60_000;
+function cachedJson(key, make) {
+  const hit = STATIC_CACHE.get(key);
+  if (hit && Date.now() - hit.at < STATIC_TTL) return hit.body;
+  const body = make();
+  STATIC_CACHE.set(key, { at: Date.now(), body });
+  return body;
+}
+
+const RL_WINDOW_MS = 60_000;
+const RL_DEFAULT_PER_MIN = 120;   // per platform key
+const RL_GLOBAL_PER_MIN = 1000;   // all keys combined (KV-backed only)
+const _rl = new Map();            // key -> number[] (in-memory fallback)
+
+function clientKey(req) {
+  const h = String(req.headers.get("Authorization") || "");
+  const m = h.match(/^Bearer\s+(.+)$/i);
+  return m ? m[1].trim() : String(new URL(req.url).searchParams.get("key") || "anon");
+}
+
+// Returns true when the request must be rejected (over the limit).
+async function rateLimited(req, env) {
+  const limit = Number(env.RATE_LIMIT_PER_MIN || RL_DEFAULT_PER_MIN);
+  const id = clientKey(req);
+  const now = Date.now();
+  const bucket = Math.floor(now / RL_WINDOW_MS);
+
+  if (env.RATE_LIMIT_KV) {
+    try {
+      const k = `rl:${id}:${bucket}`;
+      const gk = `rl:global:${bucket}`;
+      const [n, gn] = await Promise.all([
+        env.RATE_LIMIT_KV.get(k).then((v) => (v ? Number(v) : 0)),
+        env.RATE_LIMIT_KV.get(gk).then((v) => (v ? Number(v) : 0)),
+      ]);
+      await Promise.all([
+        env.RATE_LIMIT_KV.put(k, String(n + 1), { expirationTtl: 120 }),
+        env.RATE_LIMIT_KV.put(gk, String(gn + 1), { expirationTtl: 120 }),
+      ]);
+      return n >= limit || gn >= RL_GLOBAL_PER_MIN;
+    } catch { /* KV unavailable — fall through to memory */ }
+  }
+
+  const arr = (_rl.get(id) || []).filter((ts) => now - ts < RL_WINDOW_MS);
+  arr.push(now);
+  _rl.set(id, arr);
+  return arr.length > limit;
+}
+
 // ── User-Understanding Intelligence (inlined from empathy.js — zero deps) ──
 // localization-skip:begin — multilingual language/emotion detection keyword
 // lists (Greek "μαλακία", "θυμωμένος", …) are RUNTIME dictionaries, not
@@ -708,11 +764,21 @@ export default {
     const started = Date.now();
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
     if (path === "/health") return json({ ok: true, service: "atlas-proxy", contract_version: CONTRACT_VERSION, time: new Date().toISOString() });
-    if (path === "/v1/models" || path === "/v2/models") return json({ ...MODELS, contract_version: CONTRACT_VERSION, api_version: path.split("/")[1] });
-    if (path === "/v1/capabilities" || path === "/v2/capabilities" || path === "/capabilities") return json({ ok: true, service: "atlas-proxy", ...CAPABILITIES });
-    if (path === "/v1/protocol" || path === "/v2/protocol" || path === "/protocol") return json({ ok: true, service: "atlas-proxy", protocol: PROXY_PROTOCOL, protocol_version: PROXY_PROTOCOL_VERSION, contract_version: CONTRACT_VERSION });
-    if (path === "/v1/tasks" || path === "/v2/tasks" || path === "/tasks") return json({ ok: true, service: "atlas-proxy", tasks: DETERMINISTIC_TASKS, contract_version: CONTRACT_VERSION });
+    // Static metadata (Phase D cache — 60s module-scope, no recompute).
+    if (path === "/v1/models" || path === "/v2/models") return json(cachedJson("models", () => ({ ...MODELS, contract_version: CONTRACT_VERSION, api_version: path.split("/")[1] })));
+    if (path === "/v1/capabilities" || path === "/v2/capabilities" || path === "/capabilities") return json(cachedJson("capabilities", () => ({ ok: true, service: "atlas-proxy", ...CAPABILITIES })));
+    if (path === "/v1/protocol" || path === "/v2/protocol" || path === "/protocol") return json(cachedJson("protocol", () => ({ ok: true, service: "atlas-proxy", protocol: PROXY_PROTOCOL, protocol_version: PROXY_PROTOCOL_VERSION, contract_version: CONTRACT_VERSION })));
+    if (path === "/v1/tasks" || path === "/v2/tasks" || path === "/tasks") return json(cachedJson("tasks", () => ({ ok: true, service: "atlas-proxy", tasks: DETERMINISTIC_TASKS, contract_version: CONTRACT_VERSION })));
     if (!authorized(req, env)) { console.log(`[atlas-proxy] ${path} 401`); return json({ error: { message: "invalid_atlas_proxy_key" } }, 401); }
+
+    // Phase D rate limit (per-key sliding window). 429 with Retry-After.
+    if (await rateLimited(req, env)) {
+      console.log(`[atlas-proxy] ${path} 429 rate-limited`);
+      return new Response(JSON.stringify({ error: { message: "rate_limited", type: "insufficient_quota", retry_after_ms: RL_WINDOW_MS } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": String(Math.ceil(RL_WINDOW_MS / 1000)), ...CORS },
+      });
+    }
 
     // Edge web search (Bing + DDG scrape) — GET /v1/search?q=...&limit=10
     if ((path === "/v1/search" || path === "/v2/search") && (req.method === "GET" || req.method === "POST")) {

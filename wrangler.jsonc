@@ -10,13 +10,21 @@
   },
 
   "vars": {
-    "VPS_TTS_URL": "http://204.168.146.194.sslip.io:8790/v1/audio/speech"
+    "VPS_TTS_URL": "http://204.168.146.194.sslip.io:8790/v1/audio/speech",
+    "RATE_LIMIT_PER_MIN": "120"
   },
+
+  // Phase D (scaling): bind a KV namespace for cross-colos rate limiting + a
+  // durable queue. Create once, then uncomment:
+  //   wrangler kv namespace create RATE_LIMIT
+  // "kv_namespaces": [
+  //   { "binding": "RATE_LIMIT_KV", "id": "<KV_NAMESPACE_ID>" }
+  // ],
 
   // Secrets — set via `wrangler secret put <NAME>` (never committed):
   //   ATLAS_PROXY_KEY   — bearer key every platform uses to call Atlas (same key as VPS proxy)
   //   DEEPSEEK_API_KEY  — DeepSeek V4 Pro (strategist) + paid chat
   //   ALIBABA_API_KEY   — Qwen chat + image generation
-  //   GEMINI_API_KEY    — Gemini fallback chat
+    20|  //   GEMINI_API_KEY    — Gemini fallback chat
   //   AZURE_SPEECH_KEY / AZURE_SPEECH_REGION — neural TTS (optional)
 }

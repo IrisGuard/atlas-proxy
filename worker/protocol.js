@@ -72,7 +72,7 @@ PAID AI (DeepSeek Flash → Pro → Qwen → Gemini)  ← ΜΟΝΟ ό,τι δε�
 | **VPS-2** \`2.28.137.247\` | \`:8791\` 75 εργαλεία · \`:8792\` Automation Engine (21 node types, 4 workflows) · Ollama (qwen3:1.7b, gemma3:4b, qwen3:8b) | arsenal tools · N8n-style automations · local AI |
 | **PC (Atlas)** ⚠️ | Face \`:8080\` · Core \`:8788\` · NovaDevs \`:4321\` | **20 agents + 43 bots** (ΟΧΙ 24/7 — μόνο όταν το PC είναι ανοιχτό) |
 
-**Κρίσιμο (honesty):** τα 75 εργαλεία + automations + media + Outreach τρέχουν **24/7 στο VPS**. Οι **20 agents + 43 bots** τρέχουν στο **PC** (όχι 24/7). Η **Φάση Γ** φέρνει τους agents/bots στο VPS (μέσω του ήδη-υπάρχοντος \`:8789\` remote-runner) ώστε ΚΑΙ αυτοί να είναι 24/7.
+**Κρίσιμο (honesty):** 75 εργαλεία + automations + media + Outreach = **24/7 στο VPS**. Οι **20 agents + 43 bots** είναι **ΠΛΕΟΝ 24/7 στο VPS** μέσω του \`atlas-bot-bridge\` :8793 (Law 252) — η εκτέλεση των agents γίνεται με DeepSeek μέσω \`remote-runner\` :8789. Το PC (Atlas) παραμένει το primary cockpit/builder.
 
 ## 3. ROUTING ΑΝΑ ΕΡΓΑΣΙΑ (τι παίρνεις για κάθε δουλειά)
 
@@ -146,16 +146,20 @@ PAID AI (DeepSeek Flash → Pro → Qwen → Gemini)  ← ΜΟΝΟ ό,τι δε�
   (Cloudflare Paid standard + 2 Hetzner VPS + domains). "0 tokens" = 0 οριακό κόστος ανά εργασία,
   ΟΧΙ δωρεάν υποδομή.
 
-## 8. ROADMAP (επόμενες φάσεις — μετά από αυτό το protocol)
+## 8. ROADMAP (φάσεις — ζωντανή κατάσταση)
 
 - **Φάση Α — Deterministic-First Router:** ✅ ΥΛΟΠΟΙΗΘΗΚΕ (Law 248). Classifier ΠΡΙΝ το AI
   (\`worker/deterministic.js\`) + δηλωτικό \`tasks\` map στο \`GET /v1/tasks\`. Αν η εργασία = bot/tool/rule,
   εκτελείται 0 tokens — το chat endpoint επιστρέφει \`atlas_engine: "deterministic"\` χωρίς κλήση LLM.
-- **Φάση Β — Self-Healing Tool Routing:** tool graph με κόστη + Dijkstra reroute χωρίς AI
-  (όπως arxiv 2603.01548) — αν πέσει tool, πάει στο επόμενο, escalation σε AI μόνο αν όλα πέσουν.
-- **Φάση Γ — Alerting + Usage accounting:** KV/D1 counter ανά platform key + σήμα στο Harris Hub
-  όταν γίνεται fallback free→paid ή πέφτει provider. ("κάτι να μας ενημερώσει".)
-- **Φάση Δ — Κλιμάκωση:** cache, rate-limit, queue για βαριά μονοπάτια (χιλιάδες χρήστες).
+- **Φάση Β — Self-Healing Tool Routing:** ✅ ΥΛΟΠΟΙΗΘΗΚΕ (Law 251). \`atlas-tools-runner\` :8791 (VPS-2)
+  απέκτησε \`TOOL_GROUPS\` (13 οικογένειες) + cost-weighted reroute (\`/v1/tools/run\` → \`runToolSelfHealing\`,
+  \`max_hops\`, \`route\`, \`family\`, \`self_healed\`) + \`GET /v1/tools/graph\` — μηδέν AI.
+- **Φάση Γ — Γέφυρα agents+bots στο VPS 24/7:** ✅ ΥΛΟΠΟΙΗΘΗΚΕ (Law 252). Νέο \`atlas-bot-bridge\` :8793
+  (VPS-1, systemd) εκθέτει 43 bots + 20 agents 24/7 (\`/v1/bots\`, \`/v1/bots/sweep\`, \`/v1/bots/run\`,
+  \`/v1/bots/audit\`, \`/v1/bots/match\`, \`/v1/agents\`). Ο proxy τα relay: \`/v1/bots*\` + \`/v1/agents\`.
+- **Φάση Δ — Κλιμάκωση:** ✅ ΥΛΟΠΟΙΗΘΗΚΕ (Law 253). Static cache (60s) για \`/v1/{models,capabilities,
+  protocol,tasks}\` + per-key rate limit (sliding 60s, 429 + Retry-After, KV-backed όταν δεθεί
+  \`RATE_LIMIT_KV\`) + \`RATE_LIMIT_PER_MIN\` var.
 
 ---
 
