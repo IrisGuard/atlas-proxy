@@ -110,6 +110,8 @@ PAID AI (DeepSeek Flash → Pro → Qwen → Gemini)  ← ΜΟΝΟ ό,τι δε�
 | `/v1/media/*` | POST | ✅ | FFmpeg/OCR/QR/vision/edit (→ VPS-1 :8790) |
 | `/v1/automations` | CRUD | ✅ | Automation Engine 24/7 (→ VPS-2 :8792) |
 | `/v1/arsenal` | GET/POST | ✅ | 75 εργαλεία (→ atlas-tools runner) |
+| `/v1/bots` | GET/POST | ✅ | 43-bot squadron 24/7 (→ VPS-1 bot-bridge :8793) — sweep/run/audit/match |
+| `/v1/agents` | GET | ✅ | 20-agent roster 24/7 (→ VPS-1 bot-bridge :8793) |
 
 ## 6. FAILOVER — ΠΟΤΕ ΔΕΝ ΠΕΦΤΕΙ ΠΛΑΤΦΟΡΜΑ
 

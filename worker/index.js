@@ -502,6 +502,21 @@ async function arsenalForward(env, path, method, body) {
   return { status: res.status, body: data };
 }
 
+// Bot + agent bridge relay → VPS-1 atlas-bot-bridge (:8793) — the "second
+// Atlas" half (43 bots + 20 agents, 24/7). sslip.io hostname because Cloudflare
+// outbound fetch blocks raw-IP fetches to non-standard ports.
+async function botBridgeForward(env, path, method, body) {
+  const base = String(env.VPS_BOT_BRIDGE_URL || "http://204.168.146.194.sslip.io:8793").replace(/\/+$/, "");
+  const res = await fetch(`${base}${path}`, {
+    method,
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.ATLAS_PROXY_KEY || ""}` },
+    body: method === "POST" ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(300_000),
+  });
+  const data = await res.json().catch(() => ({}));
+  return { status: res.status, body: data };
+}
+
 const MODELS = {
   object: "list",
   data: [
@@ -543,8 +558,8 @@ const CAPABILITIES = {
     search: { tier: ["edge", "vps"], route: "edge Bing+DDG scrape (edge) / Wikipedia + DDG (vps)", endpoint: "/v1/search" },
     automations: { tier: ["tools"], freeFirst: true, route: "N8n-style Automation Engine (VPS-2 :8792) — free Ollama qwen3/gemma3 + 75 tools", endpoint: "/v1/automations · /v1/automations/status" },
     harvest: { tier: ["vps"], freeFirst: true, route: "Global lead harvest rotator (VPS-1) — 40 countries × 40 categories, Crawl4AI+SearXNG, 24/7", endpoint: "relay /api/atlas/* (VPS-1 :4381)" },
-    agents: { tier: ["local"], route: "20-agent fleet (strategist router)", endpoint: "local only" },
-    bots: { tier: ["local"], route: "43-bot squadron (deterministic/build/ai/external)", endpoint: "local only" },
+    agents: { tier: ["vps"], route: "20-agent roster + execution (bot-bridge :8793 · DeepSeek via remote-runner :8789)", endpoint: "/v1/agents" },
+    bots: { tier: ["vps"], route: "43-bot squadron deterministic sweep/run (bot-bridge :8793, 24/7)", endpoint: "/v1/bots · /v1/bots/sweep · /v1/bots/run · /v1/bots/audit" },
     tools: { tier: ["tools"], route: "75 arsenal tools via atlas-tools-runner", endpoint: "/v1/arsenal · /v1/arsenal/run" },
   },
 };
@@ -765,6 +780,24 @@ export default {
       const body = (req.method === "POST" || req.method === "PUT") ? await req.json().catch(() => ({})) : undefined;
       const out = await automationsForward(env, vpsPath, req.method, body);
       console.log(`[atlas-proxy] ${req.method} ${path} -> ${vpsPath} ${out.status} ${Date.now() - started}ms`);
+      return json(out.body, out.status);
+    }
+    // Bot + agent bridge relay → VPS-1 :8793 (43 bots + 20 agents, 24/7).
+    // Auth injected by the worker (ATLAS_PROXY_KEY), same contract as arsenal.
+    if (path === "/v1/bots" && req.method === "GET") {
+      const out = await botBridgeForward(env, path, "GET");
+      console.log(`[atlas-proxy] GET /v1/bots ${out.status} ${Date.now() - started}ms`);
+      return json(out.body, out.status);
+    }
+    if (path === "/v1/agents" && req.method === "GET") {
+      const out = await botBridgeForward(env, path, "GET");
+      console.log(`[atlas-proxy] GET /v1/agents ${out.status} ${Date.now() - started}ms`);
+      return json(out.body, out.status);
+    }
+    if (path.startsWith("/v1/bots")) {
+      const body = (req.method === "POST") ? await req.json().catch(() => ({})) : undefined;
+      const out = await botBridgeForward(env, path, req.method, body);
+      console.log(`[atlas-proxy] ${req.method} ${path} ${out.status} ${Date.now() - started}ms`);
       return json(out.body, out.status);
     }
     console.log(`[atlas-proxy] ${req.method} ${path} 404`);
