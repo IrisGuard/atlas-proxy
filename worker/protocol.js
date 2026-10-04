@@ -61,14 +61,18 @@ PAID AI (DeepSeek Flash → Pro → Qwen → Gemini)  ← ΜΟΝΟ ό,τι δε�
 3. **DeepSeek Flash** (φτηνό) — για routine text/extraction.
 4. **DeepSeek Pro / Qwen / Gemini** — τελευταίο, μόνο για βαρύ reasoning / media.
 
-## 2. ΤΑ 4 TIERS (πού τρέχει τι)
+## 2. ΠΟΥ ΤΡΕΧΕΙ ΤΙ (live-verified 2026-10-04)
 
-| Tier | Πού | 24/7 | Τι κάνει |
-|---|---|---|---|
-| **edge** | Cloudflare | ✅ | light AI chat (free-first), TTS, routing, auth, edge search (Bing+DDG) |
-| **vps** | Hetzner VPS-1 \`:8790\` | ✅ | FFmpeg media, Python sandbox, Whisper, OCR, SearXNG, Ollama, Nova Outreach harvest |
-| **tools** | Hetzner VPS-2 \`:8791/:8792\` | ✅ | 75 arsenal tools (crawl/QA/security/SEO/OSINT/media/code/Web3) + Automation Engine 24/7 |
-| **local** | Owner PC | ⚠️ μόνο όταν ανοιχτό | 20-agent fleet + 43-bot squadron (builder) |
+Ο proxy = **δεύτερος Atlas** 24/7. Εδώ είναι όλο το σύστημα:
+
+| Πού | Υπηρεσίες (24/7) | Ρόλος |
+|---|---|---|
+| **Cloudflare edge** | \`atlas-proxy\` worker | chat (free-first) · TTS · auth (PLATFORM_KEYS) · edge search · relay → VPS |
+| **VPS-1** \`204.168.146.194\` | \`:8790\` media proxy · \`:8888\` SearXNG · \`:4381\` Nova Outreach (+4 fill loops + tunnel) · \`:8789\` remote-runner (G13 agents) · \`:11235\` Crawl4AI · Ollama (phi4-mini, llama3.2:3b, qwen3:1.7b) · Meta Brain ingest | FFmpeg/Whisper/OCR/Python · search · email outreach · cloud agents · crawl · local AI |
+| **VPS-2** \`2.28.137.247\` | \`:8791\` 75 εργαλεία · \`:8792\` Automation Engine (21 node types, 4 workflows) · Ollama (qwen3:1.7b, gemma3:4b, qwen3:8b) | arsenal tools · N8n-style automations · local AI |
+| **PC (Atlas)** ⚠️ | Face \`:8080\` · Core \`:8788\` · NovaDevs \`:4321\` | **20 agents + 43 bots** (ΟΧΙ 24/7 — μόνο όταν το PC είναι ανοιχτό) |
+
+**Κρίσιμο (honesty):** τα 75 εργαλεία + automations + media + Outreach τρέχουν **24/7 στο VPS**. Οι **20 agents + 43 bots** τρέχουν στο **PC** (όχι 24/7). Η **Φάση Γ** φέρνει τους agents/bots στο VPS (μέσω του ήδη-υπάρχοντος \`:8789\` remote-runner) ώστε ΚΑΙ αυτοί να είναι 24/7.
 
 ## 3. ROUTING ΑΝΑ ΕΡΓΑΣΙΑ (τι παίρνεις για κάθε δουλειά)
 
