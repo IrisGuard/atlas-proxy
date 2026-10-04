@@ -6,7 +6,7 @@
 > Το AI (DeepSeek/Qwen/Gemini) μπαίνει ΜΟΝΟ όταν τίποτα άλλο δεν μπορεί.
 
 **Source of truth:** `worker/protocol.js` (served live at `GET /v1/protocol`). Keep this file in sync with it.
-Contract version: `2026.10.05-r2` · Repo: `IrisGuard/atlas-proxy`.
+Contract version: `2026.10.05-r3` · Repo: `IrisGuard/atlas-proxy`.
 
 ---
 
@@ -158,9 +158,16 @@ PAID AI (DeepSeek Flash → Pro → Qwen → Gemini)  ← ΜΟΝΟ ό,τι δε�
   τα σημερινά requests/tokens ΑΥΤΟΥ του κλειδιού (τιμές hashed, ποτέ το raw key) — KV-backed όταν δεθεί
   `USAGE_KV`, αλλιώς per-isolate μνήμη (honest: reset σε deploy/cold-start). Τα chat requests μετρούν
   tokens με `estimateTokens` (deterministic ~4 chars/token).
+- **Φάση ΣΤ — Παρατηρησιμότητα VPS 24/7:** ✅ ΥΛΟΠΟΙΗΘΗΚΕ (Law 256). Harris Hub tab «VPS 24/7» — 9 services
+  (edge + VPS-1 + VPS-2) με 5-min probe + SSH internal checks + auto-log στο Problems.
+- **Φάση Ζ — Ασφάλεια & DR:** ✅ ΥΛΟΠΟΙΗΘΗΚΕ (Law 257). `scripts/vault-sync.mjs` — κρυπτογραφημένο secrets
+  vault (AES-256-GCM, owner-only key) για `27_SECRETS` + `AtlasOwner\secrets` (C:) + Cloudflare R2 mirror
+  + ενημερωμένο DR runbook.
+- **Φάση Η — Δημόσιο λανσάρισμα:** ✅ ΥΛΟΠΟΙΗΘΗΚΕ (Law 258). Public-readiness scan (0 secrets) + usage
+  metering `/v1/usage` + Nova Devs clean (Atlas protocol αφαιρέθηκε).
 
 ---
 
 _Πηγή αλήθειας: `worker/protocol.js` + `worker/index.js` στο repo `IrisGuard/atlas-proxy`._
-_Κεντρικό Atlas protocol: `D:\NOVA_AI_OPERATING_SYSTEM\24_REPORTS\ATLAS_FULL_PLATFORM_PROTOCOL.md`._
+_Κεντρικό Atlas protocol: `24_REPORTS/ATLAS_FULL_PLATFORM_PROTOCOL.md` (local Atlas workspace)._
 _Ενημέρωσε αυτό το αρχείο ΟΠΟΤΕ αλλάζει το routing — όχι μόνο όταν "το θυμηθείς"._
