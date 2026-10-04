@@ -15,6 +15,8 @@
  *            /v1/audio/speech
  * Auth: Authorization: Bearer <ATLAS_PROXY_KEY>
  */
+import { PROXY_PROTOCOL, PROXY_PROTOCOL_VERSION } from "./protocol.js";
+
 const FREE_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8"; // Cloudflare Workers AI (free tier)
 const DEEPSEEK = "https://api.deepseek.com";
 const DEEPSEEK_MODEL = "deepseek-v4-pro";
@@ -449,6 +451,22 @@ async function mediaForward(env, path, body) {
   return { status: res.status, body: data };
 }
 
+// Automation engine relay → VPS-2 atlas-automations (:8792) — N8n-style 24/7
+// workflow engine (free Ollama + 75 tools). Same shared key. Uses an sslip.io
+// hostname (not a raw IP) because Cloudflare's outbound fetch blocks raw-IP
+// fetches to non-standard ports (403); the DNS-resolved name works.
+async function automationsForward(env, path, method, body) {
+  const base = String(env.VPS_AUTOMATIONS_URL || "http://2.28.137.247.sslip.io:8792").replace(/\/+$/, "");
+  const res = await fetch(`${base}${path}`, {
+    method,
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.ATLAS_PROXY_KEY || ""}` },
+    body: method === "POST" ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(300_000),
+  });
+  const data = await res.json().catch(() => ({}));
+  return { status: res.status, body: data };
+}
+
 // Arsenal tools relay → Atlas VPS → atlas-tools runner (75 local tools, 24/7).
 async function arsenalForward(env, path, method, body) {
   const raw = String(env.VPS_MEDIA_URL || env.VPS_TTS_URL || "http://204.168.146.194:8790").replace(/\/+$/, "");
@@ -502,6 +520,8 @@ const CAPABILITIES = {
     generativeEdit: { tier: ["vps"], route: "Gemini image edit", endpoint: "/v1/media/generative-edit" },
     python: { tier: ["vps"], route: "sandbox (stdlib)", endpoint: "/v1/python/run" },
     search: { tier: ["edge", "vps"], route: "edge Bing+DDG scrape (edge) / Wikipedia + DDG (vps)", endpoint: "/v1/search" },
+    automations: { tier: ["tools"], freeFirst: true, route: "N8n-style Automation Engine (VPS-2 :8792) — free Ollama qwen3/gemma3 + 75 tools", endpoint: "/v1/automations · /v1/automations/status" },
+    harvest: { tier: ["vps"], freeFirst: true, route: "Global lead harvest rotator (VPS-1) — 40 countries × 40 categories, Crawl4AI+SearXNG, 24/7", endpoint: "relay /api/atlas/* (VPS-1 :4381)" },
     agents: { tier: ["local"], route: "20-agent fleet (strategist router)", endpoint: "local only" },
     bots: { tier: ["local"], route: "43-bot squadron (deterministic/build/ai/external)", endpoint: "local only" },
     tools: { tier: ["tools"], route: "75 arsenal tools via atlas-tools-runner", endpoint: "/v1/arsenal · /v1/arsenal/run" },
@@ -654,6 +674,7 @@ export default {
     if (path === "/health") return json({ ok: true, service: "atlas-proxy", contract_version: CONTRACT_VERSION, time: new Date().toISOString() });
     if (path === "/v1/models" || path === "/v2/models") return json({ ...MODELS, contract_version: CONTRACT_VERSION, api_version: path.split("/")[1] });
     if (path === "/v1/capabilities" || path === "/v2/capabilities" || path === "/capabilities") return json({ ok: true, service: "atlas-proxy", ...CAPABILITIES });
+    if (path === "/v1/protocol" || path === "/v2/protocol" || path === "/protocol") return json({ ok: true, service: "atlas-proxy", protocol: PROXY_PROTOCOL, protocol_version: PROXY_PROTOCOL_VERSION, contract_version: CONTRACT_VERSION });
     if (!authorized(req, env)) { console.log(`[atlas-proxy] ${path} 401`); return json({ error: { message: "invalid_atlas_proxy_key" } }, 401); }
 
     // Edge web search (Bing + DDG scrape) — GET /v1/search?q=...&limit=10
@@ -707,6 +728,21 @@ export default {
     }
     if (/^\/v1\/arsenal\/[^/]+$/.test(path) && req.method === "GET") {
       const out = await arsenalForward(env, path, "GET");
+      return json(out.body, out.status);
+    }
+    // Automation engine relay → VPS-2 :8792. Full CRUD + run + scheduler, so the
+    // Atlas "Automations" UI can drive the 24/7 VPS engine (not just the local
+    // Command Center). Auth passed through (worker injects ATLAS_PROXY_KEY).
+    if (path === "/v1/automations/status" && req.method === "GET") {
+      const out = await automationsForward(env, "/health", "GET");
+      console.log(`[atlas-proxy] GET /v1/automations/status ${out.status} ${Date.now() - started}ms`);
+      return json(out.body, out.status);
+    }
+    if (path.startsWith("/v1/automations")) {
+      const vpsPath = "/api/automations" + path.slice("/v1/automations".length);
+      const body = (req.method === "POST" || req.method === "PUT") ? await req.json().catch(() => ({})) : undefined;
+      const out = await automationsForward(env, vpsPath, req.method, body);
+      console.log(`[atlas-proxy] ${req.method} ${path} -> ${vpsPath} ${out.status} ${Date.now() - started}ms`);
       return json(out.body, out.status);
     }
     console.log(`[atlas-proxy] ${req.method} ${path} 404`);
