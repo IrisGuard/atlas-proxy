@@ -111,6 +111,7 @@ PAID AI (DeepSeek Flash → Pro → Qwen → Gemini)  ← ΜΟΝΟ ό,τι δε�
 | \`/v1/models\` | GET | ❌ | model list (free/standard/genius) |
 | \`/v1/capabilities\` | GET | ❌ | τι μπορεί το σύστημα + πού τρέχει (tiers) |
 | \`/v1/protocol\` | GET | ❌ | **αυτό το protocol** |
+| \`/v1/tasks\` | GET | ❌ | deterministic task registry (bot/tool → 0 tokens) |
 | \`/v1/chat/completions\` | POST | ✅ | chat (free-first → DeepSeek → Qwen → Gemini) |
 | \`/v1/images/generations\` | POST | ✅ | Qwen image (→ VPS-1) |
 | \`/v1/audio/speech\` | POST | ✅ | TTS (Azure Ava/Athina → Edge free) |
@@ -141,8 +142,9 @@ PAID AI (DeepSeek Flash → Pro → Qwen → Gemini)  ← ΜΟΝΟ ό,τι δε�
 
 ## 8. ROADMAP (επόμενες φάσεις — μετά από αυτό το protocol)
 
-- **Φάση Α — Deterministic-First Router:** classifier ΠΡΙΝ το AI. Αν η εργασία = 100% bot/tool/rule,
-  εκτελείται deterministic (0 tokens). Το proxy δηλώνει δηλωτικό \`tasks\` map ("αυτό το task → bot X").
+- **Φάση Α — Deterministic-First Router:** ✅ ΥΛΟΠΟΙΗΘΗΚΕ (Law 248). Classifier ΠΡΙΝ το AI
+  (\`worker/deterministic.js\`) + δηλωτικό \`tasks\` map στο \`GET /v1/tasks\`. Αν η εργασία = bot/tool/rule,
+  εκτελείται 0 tokens — το chat endpoint επιστρέφει \`atlas_engine: "deterministic"\` χωρίς κλήση LLM.
 - **Φάση Β — Self-Healing Tool Routing:** tool graph με κόστη + Dijkstra reroute χωρίς AI
   (όπως arxiv 2603.01548) — αν πέσει tool, πάει στο επόμενο, escalation σε AI μόνο αν όλα πέσουν.
 - **Φάση Γ — Alerting + Usage accounting:** KV/D1 counter ανά platform key + σήμα στο Harris Hub

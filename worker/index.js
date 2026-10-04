@@ -16,6 +16,7 @@
  * Auth: Authorization: Bearer <ATLAS_PROXY_KEY>
  */
 import { PROXY_PROTOCOL, PROXY_PROTOCOL_VERSION } from "./protocol.js";
+import { DETERMINISTIC_TASKS, detectDeterministicTask } from "./deterministic.js";
 
 const FREE_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8"; // Cloudflare Workers AI (free tier)
 const DEEPSEEK = "https://api.deepseek.com";
@@ -288,6 +289,26 @@ async function chatCompletion(env, body) {
   const wantsBuild =
     /\b(build|create|make|write|generate|code|app|game|website|dashboard|landing|html|site|write me|build me|make me)\b/i.test(lastText) ||
     /(φτιάξε|κατασκεύασε|δημιούργησε|γράψε|κάνε|χτίσε|παιχνίδι|εφαρμογή|ιστοσελίδα|ιστοσελίδας|Tetris|calculator|todo|snake|pong)/i.test(lastText);
+
+  // Deterministic-first (Phase A, Law 248): if this is a bot/tool/edge job,
+  // route it WITHOUT the AI ladder. 0 tokens. The LLM is the LAST resort.
+  // Build requests and json/thinking always skip this and go to DeepSeek.
+  const det = detectDeterministicTask(lastText);
+  if (det && !jsonMode && !thinking && !wantsBuild) {
+    return {
+      status: 200,
+      body: {
+        id: `atlas_${Date.now().toString(36)}`,
+        object: "chat.completion",
+        created: Math.floor(Date.now() / 1000),
+        model: "atlas-proxy/deterministic",
+        choices: [{ index: 0, message: { role: "assistant", content: `[deterministic] ${det.el} — route: ${det.endpoint || det.bot || det.tool} (0 tokens, no AI).` }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        atlas_engine: "deterministic",
+        deterministic_route: det,
+      },
+    };
+  }
 
   // JSON mode = single structured shot (no continuation), like the local proxy.
   if (jsonMode) {
@@ -675,6 +696,7 @@ export default {
     if (path === "/v1/models" || path === "/v2/models") return json({ ...MODELS, contract_version: CONTRACT_VERSION, api_version: path.split("/")[1] });
     if (path === "/v1/capabilities" || path === "/v2/capabilities" || path === "/capabilities") return json({ ok: true, service: "atlas-proxy", ...CAPABILITIES });
     if (path === "/v1/protocol" || path === "/v2/protocol" || path === "/protocol") return json({ ok: true, service: "atlas-proxy", protocol: PROXY_PROTOCOL, protocol_version: PROXY_PROTOCOL_VERSION, contract_version: CONTRACT_VERSION });
+    if (path === "/v1/tasks" || path === "/v2/tasks" || path === "/tasks") return json({ ok: true, service: "atlas-proxy", tasks: DETERMINISTIC_TASKS, contract_version: CONTRACT_VERSION });
     if (!authorized(req, env)) { console.log(`[atlas-proxy] ${path} 401`); return json({ error: { message: "invalid_atlas_proxy_key" } }, 401); }
 
     // Edge web search (Bing + DDG scrape) — GET /v1/search?q=...&limit=10
