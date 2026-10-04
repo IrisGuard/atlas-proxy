@@ -17,6 +17,7 @@
  */
 import { PROXY_PROTOCOL, PROXY_PROTOCOL_VERSION } from "./protocol.js";
 import { DETERMINISTIC_TASKS, detectDeterministicTask } from "./deterministic.js";
+import { fetchWithRetry, quotaFor, recordUsage, readUsage, estimateTokens } from "./scaling.js";
 
 const FREE_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8"; // Cloudflare Workers AI (free tier)
 const DEEPSEEK = "https://api.deepseek.com";
@@ -38,6 +39,29 @@ function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", ...CORS } });
 }
 
+// Resolve the caller's identity: { key, platform } — the raw bearer token plus
+// which platform (if any) it belongs to in PLATFORM_KEYS. Used by auth, quotas,
+// and usage metering. Returns null when no key is present.
+function resolveIdentity(req, env) {
+  const h = String(req.headers.get("Authorization") || "");
+  const m = h.match(/^Bearer\s+(.+)$/i);
+  const got = m ? m[1].trim() : String(new URL(req.url).searchParams.get("key") || "");
+  if (!got) return null;
+  let platform = null;
+  try {
+    const pk = env.PLATFORM_KEYS;
+    if (pk) {
+      const map = typeof pk === "string" ? JSON.parse(pk) : pk;
+      if (map && typeof map === "object") {
+        for (const [name, value] of Object.entries(map)) {
+          if (value && String(value) === got) { platform = name; break; }
+        }
+      }
+    }
+  } catch { /* ignore malformed PLATFORM_KEYS */ }
+  return { key: got, platform };
+}
+
 function authorized(req, env) {
   // Per-platform keys (F5): single ATLAS_PROXY_KEY still works (back-compat),
   // and an optional PLATFORM_KEYS JSON map {platform: key} lets every platform
@@ -52,10 +76,8 @@ function authorized(req, env) {
     }
   } catch { /* ignore malformed PLATFORM_KEYS */ }
   if (!keys.size) return false;
-  const h = String(req.headers.get("Authorization") || "");
-  const m = h.match(/^Bearer\s+(.+)$/i);
-  const got = m ? m[1].trim() : new URL(req.url).searchParams.get("key");
-  return Boolean(got) && keys.has(got);
+  const id = resolveIdentity(req, env);
+  return Boolean(id?.key) && keys.has(id.key);
 }
 
 // ── Phase D: scaling — static cache + per-key rate limit (Owner 2026-10-04) ─
@@ -79,22 +101,19 @@ const RL_DEFAULT_PER_MIN = 120;   // per platform key
 const RL_GLOBAL_PER_MIN = 1000;   // all keys combined (KV-backed only)
 const _rl = new Map();            // key -> number[] (in-memory fallback)
 
-function clientKey(req) {
-  const h = String(req.headers.get("Authorization") || "");
-  const m = h.match(/^Bearer\s+(.+)$/i);
-  return m ? m[1].trim() : String(new URL(req.url).searchParams.get("key") || "anon");
-}
-
 // Returns true when the request must be rejected (over the limit).
+// Phase E: per-tenant quotas — a platform's own KEY_QUOTAS budget wins over
+// the global default, so one noisy client never starves the others.
 async function rateLimited(req, env) {
-  const limit = Number(env.RATE_LIMIT_PER_MIN || RL_DEFAULT_PER_MIN);
-  const id = clientKey(req);
+  const id = resolveIdentity(req, env);
+  const key = id?.key || "anon";
+  const limit = quotaFor(env, key, id?.platform);
   const now = Date.now();
   const bucket = Math.floor(now / RL_WINDOW_MS);
 
   if (env.RATE_LIMIT_KV) {
     try {
-      const k = `rl:${id}:${bucket}`;
+      const k = `rl:${key}:${bucket}`;
       const gk = `rl:global:${bucket}`;
       const [n, gn] = await Promise.all([
         env.RATE_LIMIT_KV.get(k).then((v) => (v ? Number(v) : 0)),
@@ -108,9 +127,9 @@ async function rateLimited(req, env) {
     } catch { /* KV unavailable — fall through to memory */ }
   }
 
-  const arr = (_rl.get(id) || []).filter((ts) => now - ts < RL_WINDOW_MS);
+  const arr = (_rl.get(key) || []).filter((ts) => now - ts < RL_WINDOW_MS);
   arr.push(now);
-  _rl.set(id, arr);
+  _rl.set(key, arr);
   return arr.length > limit;
 }
 
@@ -518,14 +537,19 @@ async function mediaForward(env, path, body) {
   const raw = String(env.VPS_MEDIA_URL || env.VPS_TTS_URL || "http://204.168.146.194:8790").replace(/\/+$/, "");
   const vpsBase = raw.replace(/\/v1\/audio\/speech$/, "");
   const vpsPath = path.replace(/^\/v2\//, "/v1/"); // /v2 aliases forward to the VPS /v1 contract
-  const res = await fetch(`${vpsBase}${vpsPath}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.ATLAS_PROXY_KEY || ""}` },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(300_000),
-  });
-  const data = await res.json().catch(() => ({}));
-  return { status: res.status, body: data };
+  try {
+    const res = await fetchWithRetry(`${vpsBase}${vpsPath}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.ATLAS_PROXY_KEY || ""}` },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(300_000),
+    });
+    const data = await res.json().catch(() => ({}));
+    return { status: res.status, body: data };
+  } catch (e) {
+    console.error(`[atlas-proxy] media VPS failed: ${e?.name || "error"} ${e?.message || e}`);
+    return { status: 503, body: { error: { message: "vps_media_unavailable", retryable: true } } };
+  }
 }
 
 // Automation engine relay → VPS-2 atlas-automations (:8792) — N8n-style 24/7
@@ -534,28 +558,38 @@ async function mediaForward(env, path, body) {
 // fetches to non-standard ports (403); the DNS-resolved name works.
 async function automationsForward(env, path, method, body) {
   const base = String(env.VPS_AUTOMATIONS_URL || "http://2.28.137.247.sslip.io:8792").replace(/\/+$/, "");
-  const res = await fetch(`${base}${path}`, {
-    method,
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.ATLAS_PROXY_KEY || ""}` },
-    body: method === "POST" ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(300_000),
-  });
-  const data = await res.json().catch(() => ({}));
-  return { status: res.status, body: data };
+  try {
+    const res = await fetchWithRetry(`${base}${path}`, {
+      method,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.ATLAS_PROXY_KEY || ""}` },
+      body: method === "POST" ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(300_000),
+    });
+    const data = await res.json().catch(() => ({}));
+    return { status: res.status, body: data };
+  } catch (e) {
+    console.error(`[atlas-proxy] automations VPS failed: ${e?.name || "error"} ${e?.message || e}`);
+    return { status: 503, body: { error: { message: "vps_automations_unavailable", retryable: true } } };
+  }
 }
 
 // Arsenal tools relay → Atlas VPS → atlas-tools runner (75 local tools, 24/7).
 async function arsenalForward(env, path, method, body) {
   const raw = String(env.VPS_MEDIA_URL || env.VPS_TTS_URL || "http://204.168.146.194:8790").replace(/\/+$/, "");
   const vpsBase = raw.replace(/\/v1\/audio\/speech$/, "");
-  const res = await fetch(`${vpsBase}${path}`, {
-    method,
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.ATLAS_PROXY_KEY || ""}` },
-    body: method === "POST" ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(300_000),
-  });
-  const data = await res.json().catch(() => ({}));
-  return { status: res.status, body: data };
+  try {
+    const res = await fetchWithRetry(`${vpsBase}${path}`, {
+      method,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.ATLAS_PROXY_KEY || ""}` },
+      body: method === "POST" ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(300_000),
+    });
+    const data = await res.json().catch(() => ({}));
+    return { status: res.status, body: data };
+  } catch (e) {
+    console.error(`[atlas-proxy] arsenal VPS failed: ${e?.name || "error"} ${e?.message || e}`);
+    return { status: 503, body: { error: { message: "vps_arsenal_unavailable", retryable: true } } };
+  }
 }
 
 // Bot + agent bridge relay → VPS-1 atlas-bot-bridge (:8793) — the "second
@@ -563,14 +597,19 @@ async function arsenalForward(env, path, method, body) {
 // outbound fetch blocks raw-IP fetches to non-standard ports.
 async function botBridgeForward(env, path, method, body) {
   const base = String(env.VPS_BOT_BRIDGE_URL || "http://204.168.146.194.sslip.io:8793").replace(/\/+$/, "");
-  const res = await fetch(`${base}${path}`, {
-    method,
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.ATLAS_PROXY_KEY || ""}` },
-    body: method === "POST" ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(300_000),
-  });
-  const data = await res.json().catch(() => ({}));
-  return { status: res.status, body: data };
+  try {
+    const res = await fetchWithRetry(`${base}${path}`, {
+      method,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.ATLAS_PROXY_KEY || ""}` },
+      body: method === "POST" ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(300_000),
+    });
+    const data = await res.json().catch(() => ({}));
+    return { status: res.status, body: data };
+  } catch (e) {
+    console.error(`[atlas-proxy] bot-bridge VPS failed: ${e?.name || "error"} ${e?.message || e}`);
+    return { status: 503, body: { error: { message: "vps_bot_bridge_unavailable", retryable: true } } };
+  }
 }
 
 const MODELS = {
@@ -771,6 +810,15 @@ export default {
     if (path === "/v1/tasks" || path === "/v2/tasks" || path === "/tasks") return json(cachedJson("tasks", () => ({ ok: true, service: "atlas-proxy", tasks: DETERMINISTIC_TASKS, contract_version: CONTRACT_VERSION })));
     if (!authorized(req, env)) { console.log(`[atlas-proxy] ${path} 401`); return json({ error: { message: "invalid_atlas_proxy_key" } }, 401); }
 
+    // Phase E: per-key usage metering — report today's counters for THIS key
+    // (no cross-tenant visibility, values hashed, key never logged).
+    if (path === "/v1/usage" && req.method === "GET") {
+      const id = resolveIdentity(req, env);
+      const usage = await readUsage(env, id?.key || "anon");
+      const limit = quotaFor(env, id?.key, id?.platform);
+      return json({ ok: true, service: "atlas-proxy", platform: id?.platform || null, usage, rate_limit_per_min: limit });
+    }
+
     // Phase D rate limit (per-key sliding window). 429 with Retry-After.
     if (await rateLimited(req, env)) {
       console.log(`[atlas-proxy] ${path} 429 rate-limited`);
@@ -795,6 +843,9 @@ export default {
       const body = await req.json().catch(() => ({}));
       const out = await chatCompletion(env, body);
       console.log(`[atlas-proxy] POST ${path} ${out.status} engine=${out.body?.atlas_engine || "n/a"} ${Date.now() - started}ms`);
+      // Phase E: meter this request (fire-and-forget — never block the response).
+      const id = resolveIdentity(req, env);
+      if (id?.key && out.status < 500) recordUsage(env, id.key, estimateTokens(body)).catch(() => {});
       return json(out.body, out.status);
     }
     if ((path === "/v1/images/generations" || path === "/v2/images/generations") && req.method === "POST") {

@@ -14,15 +14,19 @@
     "RATE_LIMIT_PER_MIN": "120"
   },
 
-  // Phase D (scaling): bind a KV namespace for cross-colos rate limiting + a
-  // durable queue. Create once, then uncomment:
+  // Phase E (scaling): bind TWO KV namespaces for durable cross-colos rate
+  // limiting + usage metering. Create once, then uncomment:
   //   wrangler kv namespace create RATE_LIMIT
+  //   wrangler kv namespace create USAGE
   // "kv_namespaces": [
-  //   { "binding": "RATE_LIMIT_KV", "id": "<KV_NAMESPACE_ID>" }
+  //   { "binding": "RATE_LIMIT_KV", "id": "<RATE_LIMIT_KV_ID>" },
+  //   { "binding": "USAGE_KV", "id": "<USAGE_KV_ID>" }
   // ],
 
   // Secrets — set via `wrangler secret put <NAME>` (never committed):
   //   ATLAS_PROXY_KEY   — bearer key every platform uses to call Atlas (same key as VPS proxy)
+  //   PLATFORM_KEYS     — JSON map {"platform": "key"} (per-platform rotation isolation)
+  //   KEY_QUOTAS        — JSON map {"platform"|"key": perMin} (Phase E per-tenant budgets)
   //   DEEPSEEK_API_KEY  — DeepSeek V4 Pro (strategist) + paid chat
   //   ALIBABA_API_KEY   — Qwen chat + image generation
   //   GEMINI_API_KEY    — Gemini fallback chat

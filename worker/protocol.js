@@ -12,7 +12,7 @@
  * Keep worker/protocol.js and PROXY_PROTOCOL.md IN SYNC. Bump §contract_version
  * only on an explicit Owner unlock of the frozen contract.
  */
-export const PROXY_PROTOCOL_VERSION = "2026.10.04-r1";
+export const PROXY_PROTOCOL_VERSION = "2026.10.05-r2";
 
 export const PROXY_PROTOCOL = `# ATLAS PROXY — ΠΡΩΤΟΚΟΛΛΟ ΛΕΙΤΟΥΡΓΙΑΣ
 
@@ -116,6 +116,7 @@ PAID AI (DeepSeek Flash → Pro → Qwen → Gemini)  ← ΜΟΝΟ ό,τι δε�
 | \`/v1/capabilities\` | GET | ❌ | τι μπορεί το σύστημα + πού τρέχει (tiers) |
 | \`/v1/protocol\` | GET | ❌ | **αυτό το protocol** |
 | \`/v1/tasks\` | GET | ❌ | deterministic task registry (bot/tool → 0 tokens) |
+| \`/v1/usage\` | GET | ✅ | per-key χρήση σήμερα (requests/tokens) + quota — Φάση Ε |
 | \`/v1/chat/completions\` | POST | ✅ | chat (free-first → DeepSeek → Qwen → Gemini) |
 | \`/v1/images/generations\` | POST | ✅ | Qwen image (→ VPS-1) |
 | \`/v1/audio/speech\` | POST | ✅ | TTS (Azure Ava/Athina → Edge free) |
@@ -160,6 +161,15 @@ PAID AI (DeepSeek Flash → Pro → Qwen → Gemini)  ← ΜΟΝΟ ό,τι δε�
 - **Φάση Δ — Κλιμάκωση:** ✅ ΥΛΟΠΟΙΗΘΗΚΕ (Law 253). Static cache (60s) για \`/v1/{models,capabilities,
   protocol,tasks}\` + per-key rate limit (sliding 60s, 429 + Retry-After, KV-backed όταν δεθεί
   \`RATE_LIMIT_KV\`) + \`RATE_LIMIT_PER_MIN\` var.
+- **Φάση Ε — Σκλήρυνση κλίμακας (χιλιάδες χρήστες):** ✅ ΥΛΟΠΟΙΗΘΗΚΕ (Law 255). **(1) Per-tenant quotas:**
+  νέο \`worker/scaling.js\` — \`KEY_QUOTAS\` JSON map \`{platform|key: perMin}\` ώστε κάθε πλατφόρμα να έχει
+  δικό της budget (ένας θορυβώδης client δεν πεινάει τους άλλους). **(2) Retry + exponential backoff:**
+  όλα τα VPS relays (media/automations/arsenal/bot-bridge) κάνουν \`fetchWithRetry\` (2 retries, 400ms→800ms)
+  σε transient network faults — κανένα HTTP 000 από παροδικό reset/cold-start· ένα πραγματικά πεσμένο VPS
+  γυρίζει καθαρό 503 \`retryable:true\` (ποτέ hang). **(3) Usage metering:** \`/v1/usage\` (auth) επιστρέφει
+  τα σημερινά requests/tokens ΑΥΤΟΥ του κλειδιού (τιμές hashed, ποτέ το raw key) — KV-backed όταν δεθεί
+  \`USAGE_KV\`, αλλιώς per-isolate μνήμη (honest: reset σε deploy/cold-start). Τα chat requests μετρούν
+  tokens με \`estimateTokens\` (deterministic ~4 chars/token).
 
 ---
 
