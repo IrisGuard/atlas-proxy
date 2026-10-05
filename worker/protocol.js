@@ -12,7 +12,7 @@
  * Keep worker/protocol.js and PROXY_PROTOCOL.md IN SYNC. Bump §contract_version
  * only on an explicit Owner unlock of the frozen contract.
  */
-export const PROXY_PROTOCOL_VERSION = "2026.10.05-r3";
+export const PROXY_PROTOCOL_VERSION = "2026.10.05-r4";
 
 export const PROXY_PROTOCOL = `# ATLAS PROXY — ΠΡΩΤΟΚΟΛΛΟ ΛΕΙΤΟΥΡΓΙΑΣ
 
@@ -172,9 +172,10 @@ PAID AI (DeepSeek Flash → Pro → Qwen → Gemini)  ← ΜΟΝΟ ό,τι δε�
   tokens με \`estimateTokens\` (deterministic ~4 chars/token).
 - **Φάση ΣΤ — Παρατηρησιμότητα VPS 24/7:** ✅ ΥΛΟΠΟΙΗΘΗΚΕ (Law 256). Harris Hub tab «VPS 24/7» — 9 services
   (edge + VPS-1 + VPS-2) με 5-min probe + SSH internal checks + auto-log στο Problems.
-- **Φάση Ζ — Ασφάλεια & DR:** ✅ ΥΛΟΠΟΙΗΘΗΚΕ (Law 257). \`scripts/vault-sync.mjs\` — κρυπτογραφημένο secrets
-  vault (AES-256-GCM, owner-only key) για \`27_SECRETS\` + \`AtlasOwner\\secrets\` (C:) + Cloudflare R2 mirror
-  + ενημερωμένο DR runbook.
+- **Φάση Ζ — Ασφάλεια & DR:** ✅ ΥΛΟΠΟΙΗΘΗΚΕ (Law 257/259). \`scripts/vault-sync.mjs\` — κρυπτογραφημένο secrets
+  vault (AES-256-GCM, owner-only key) για \`27_SECRETS\` + \`AtlasOwner\\secrets\` (C:) + project \`.env\` (44 σύνολο)
+  → **LIVE στο Cloudflare R2** \`atlas-secrets-vault\` (vault.enc + master key + manifest) — full recovery μόνο
+  από Cloudflare.
 - **Φάση Η — Δημόσιο λανσάρισμα:** ✅ ΥΛΟΠΟΙΗΘΗΚΕ (Law 258). Public-readiness scan (0 secrets) + usage
   metering \`/v1/usage\` + Nova Devs clean (Atlas protocol αφαιρέθηκε).
 
