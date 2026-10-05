@@ -12,7 +12,7 @@
  * Keep worker/protocol.js and PROXY_PROTOCOL.md IN SYNC. Bump §contract_version
  * only on an explicit Owner unlock of the frozen contract.
  */
-export const PROXY_PROTOCOL_VERSION = "2026.10.05-r4";
+export const PROXY_PROTOCOL_VERSION = "2026.10.05-r5";
 
 export const PROXY_PROTOCOL = `# ATLAS PROXY — ΠΡΩΤΟΚΟΛΛΟ ΛΕΙΤΟΥΡΓΙΑΣ
 
@@ -178,6 +178,9 @@ PAID AI (DeepSeek Flash → Pro → Qwen → Gemini)  ← ΜΟΝΟ ό,τι δε�
   από Cloudflare.
 - **Φάση Η — Δημόσιο λανσάρισμα:** ✅ ΥΛΟΠΟΙΗΘΗΚΕ (Law 258). Public-readiness scan (0 secrets) + usage
   metering \`/v1/usage\` + Nova Devs clean (Atlas protocol αφαιρέθηκε).
+- **Ουδέτερο δημόσιο πρόσωπο** ✅ (Law 260): το root \`/\` γυρίζει \`{"error":{"message":"unauthorized"}}\`
+  (δεν λέει «Atlas») και το \`/health\` γυρίζει \`service:"gateway"\` — κανένα «atlas-proxy» στο δημόσιο
+  JSON. Τα \`atlas_engine\` + \`model:"atlas-proxy/*"\` μένουν ΜΟΝΟ σε authenticated responses (API contract).
 
 ---
 

@@ -6,7 +6,7 @@
 > Το AI (DeepSeek/Qwen/Gemini) μπαίνει ΜΟΝΟ όταν τίποτα άλλο δεν μπορεί.
 
 **Source of truth:** `worker/protocol.js` (served live at `GET /v1/protocol`). Keep this file in sync with it.
-Contract version: `2026.10.05-r4` · Repo: `IrisGuard/atlas-proxy`.
+Contract version: `2026.10.05-r5` · Repo: `IrisGuard/atlas-proxy`.
 
 ---
 
@@ -166,6 +166,9 @@ PAID AI (DeepSeek Flash → Pro → Qwen → Gemini)  ← ΜΟΝΟ ό,τι δε�
   από Cloudflare.
 - **Φάση Η — Δημόσιο λανσάρισμα:** ✅ ΥΛΟΠΟΙΗΘΗΚΕ (Law 258). Public-readiness scan (0 secrets) + usage
   metering `/v1/usage` + Nova Devs clean (Atlas protocol αφαιρέθηκε).
+- **Ουδέτερο δημόσιο πρόσωπο** ✅ (Law 260): το root `/` γυρίζει `{"error":{"message":"unauthorized"}}`
+  (δεν λέει «Atlas») και το `/health` γυρίζει `service:"gateway"` — κανένα «atlas-proxy» στο δημόσιο
+  JSON. Τα `atlas_engine` + `model:"atlas-proxy/*"` μένουν ΜΟΝΟ σε authenticated responses (API contract).
 
 ---
 

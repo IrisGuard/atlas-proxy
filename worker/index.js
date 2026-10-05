@@ -454,7 +454,7 @@ async function imageGeneration(env, body) {
     const data = await res.json().catch(() => ({}));
     return { status: res.status, body: data };
   } catch (e) {
-    console.error(`[atlas-proxy] image gen VPS failed: ${e?.name || "error"} ${e?.message || e}`);
+    console.error(`[gateway] image gen VPS failed: ${e?.name || "error"} ${e?.message || e}`);
     return { status: 502, body: { error: { message: "image_vps_unavailable" } } };
   }
 }
@@ -517,12 +517,12 @@ async function speech(env, body) {
         const buf = Uint8Array.from(atob(data.audio.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
         if (buf.length >= 200) return { status: 200, engine: "edge", voice: data.voice || voice, raw: buf, mime: data.format === "mp3" ? "audio/mpeg" : "audio/wav" };
       }
-      console.error(`[atlas-proxy] edge-tts VPS no audio: ${JSON.stringify(data).slice(0, 200)}`);
+      console.error(`[gateway] edge-tts VPS no audio: ${JSON.stringify(data).slice(0, 200)}`);
     } else {
-      console.error(`[atlas-proxy] edge-tts VPS HTTP ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`);
+      console.error(`[gateway] edge-tts VPS HTTP ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`);
     }
   } catch (e) {
-    console.error(`[atlas-proxy] edge-tts VPS fetch failed: ${e?.name || "error"} ${e?.message || e}`);
+    console.error(`[gateway] edge-tts VPS fetch failed: ${e?.name || "error"} ${e?.message || e}`);
   }
 
   return { status: 502, body: { error: { message: "tts_backend_unavailable" } } };
@@ -547,7 +547,7 @@ async function mediaForward(env, path, body) {
     const data = await res.json().catch(() => ({}));
     return { status: res.status, body: data };
   } catch (e) {
-    console.error(`[atlas-proxy] media VPS failed: ${e?.name || "error"} ${e?.message || e}`);
+    console.error(`[gateway] media VPS failed: ${e?.name || "error"} ${e?.message || e}`);
     return { status: 503, body: { error: { message: "vps_media_unavailable", retryable: true } } };
   }
 }
@@ -568,7 +568,7 @@ async function automationsForward(env, path, method, body) {
     const data = await res.json().catch(() => ({}));
     return { status: res.status, body: data };
   } catch (e) {
-    console.error(`[atlas-proxy] automations VPS failed: ${e?.name || "error"} ${e?.message || e}`);
+    console.error(`[gateway] automations VPS failed: ${e?.name || "error"} ${e?.message || e}`);
     return { status: 503, body: { error: { message: "vps_automations_unavailable", retryable: true } } };
   }
 }
@@ -587,7 +587,7 @@ async function arsenalForward(env, path, method, body) {
     const data = await res.json().catch(() => ({}));
     return { status: res.status, body: data };
   } catch (e) {
-    console.error(`[atlas-proxy] arsenal VPS failed: ${e?.name || "error"} ${e?.message || e}`);
+    console.error(`[gateway] arsenal VPS failed: ${e?.name || "error"} ${e?.message || e}`);
     return { status: 503, body: { error: { message: "vps_arsenal_unavailable", retryable: true } } };
   }
 }
@@ -607,7 +607,7 @@ async function botBridgeForward(env, path, method, body) {
     const data = await res.json().catch(() => ({}));
     return { status: res.status, body: data };
   } catch (e) {
-    console.error(`[atlas-proxy] bot-bridge VPS failed: ${e?.name || "error"} ${e?.message || e}`);
+    console.error(`[gateway] bot-bridge VPS failed: ${e?.name || "error"} ${e?.message || e}`);
     return { status: 503, body: { error: { message: "vps_bot_bridge_unavailable", retryable: true } } };
   }
 }
@@ -615,9 +615,9 @@ async function botBridgeForward(env, path, method, body) {
 const MODELS = {
   object: "list",
   data: [
-    { id: "atlas-proxy/free", object: "model", owned_by: "atlas", created: 0 },
-    { id: "atlas-proxy/standard", object: "model", owned_by: "atlas", created: 0 },
-    { id: "atlas-proxy/genius", object: "model", owned_by: "atlas", created: 0 },
+    { id: "atlas-proxy/free", object: "model", owned_by: "gateway", created: 0 },
+    { id: "atlas-proxy/standard", object: "model", owned_by: "gateway", created: 0 },
+    { id: "atlas-proxy/genius", object: "model", owned_by: "gateway", created: 0 },
   ],
 };
 
@@ -802,13 +802,13 @@ export default {
     const path = url.pathname.replace(/\/+$/, "") || "/";
     const started = Date.now();
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
-    if (path === "/health") return json({ ok: true, service: "atlas-proxy", contract_version: CONTRACT_VERSION, time: new Date().toISOString() });
+    if (path === "/health") return json({ ok: true, service: "gateway", contract_version: CONTRACT_VERSION, time: new Date().toISOString() });
     // Static metadata (Phase D cache — 60s module-scope, no recompute).
     if (path === "/v1/models" || path === "/v2/models") return json(cachedJson("models", () => ({ ...MODELS, contract_version: CONTRACT_VERSION, api_version: path.split("/")[1] })));
-    if (path === "/v1/capabilities" || path === "/v2/capabilities" || path === "/capabilities") return json(cachedJson("capabilities", () => ({ ok: true, service: "atlas-proxy", ...CAPABILITIES })));
-    if (path === "/v1/protocol" || path === "/v2/protocol" || path === "/protocol") return json(cachedJson("protocol", () => ({ ok: true, service: "atlas-proxy", protocol: PROXY_PROTOCOL, protocol_version: PROXY_PROTOCOL_VERSION, contract_version: CONTRACT_VERSION })));
-    if (path === "/v1/tasks" || path === "/v2/tasks" || path === "/tasks") return json(cachedJson("tasks", () => ({ ok: true, service: "atlas-proxy", tasks: DETERMINISTIC_TASKS, contract_version: CONTRACT_VERSION })));
-    if (!authorized(req, env)) { console.log(`[atlas-proxy] ${path} 401`); return json({ error: { message: "invalid_atlas_proxy_key" } }, 401); }
+    if (path === "/v1/capabilities" || path === "/v2/capabilities" || path === "/capabilities") return json(cachedJson("capabilities", () => ({ ok: true, service: "gateway", ...CAPABILITIES })));
+    if (path === "/v1/protocol" || path === "/v2/protocol" || path === "/protocol") return json(cachedJson("protocol", () => ({ ok: true, service: "gateway", protocol: PROXY_PROTOCOL, protocol_version: PROXY_PROTOCOL_VERSION, contract_version: CONTRACT_VERSION })));
+    if (path === "/v1/tasks" || path === "/v2/tasks" || path === "/tasks") return json(cachedJson("tasks", () => ({ ok: true, service: "gateway", tasks: DETERMINISTIC_TASKS, contract_version: CONTRACT_VERSION })));
+    if (!authorized(req, env)) { console.log(`[gateway] ${path} 401`); return json({ error: { message: "unauthorized" } }, 401); }
 
     // Phase E: per-key usage metering — report today's counters for THIS key
     // (no cross-tenant visibility, values hashed, key never logged).
@@ -816,12 +816,12 @@ export default {
       const id = resolveIdentity(req, env);
       const usage = await readUsage(env, id?.key || "anon");
       const limit = quotaFor(env, id?.key, id?.platform);
-      return json({ ok: true, service: "atlas-proxy", platform: id?.platform || null, usage, rate_limit_per_min: limit });
+      return json({ ok: true, service: "gateway", platform: id?.platform || null, usage, rate_limit_per_min: limit });
     }
 
     // Phase D rate limit (per-key sliding window). 429 with Retry-After.
     if (await rateLimited(req, env)) {
-      console.log(`[atlas-proxy] ${path} 429 rate-limited`);
+      console.log(`[gateway] ${path} 429 rate-limited`);
       return new Response(JSON.stringify({ error: { message: "rate_limited", type: "insufficient_quota", retry_after_ms: RL_WINDOW_MS } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": String(Math.ceil(RL_WINDOW_MS / 1000)), ...CORS },
@@ -835,14 +835,14 @@ export default {
       const limit = Math.min(20, Math.max(1, Number(url.searchParams.get("limit") || body?.limit || 10)));
       if (!q) return json({ error: { message: "q required" } }, 400);
       const results = await edgeWebSearch(env, q, limit);
-      console.log(`[atlas-proxy] ${req.method} /v1/search n=${results.length} ${Date.now() - started}ms`);
+      console.log(`[gateway] ${req.method} /v1/search n=${results.length} ${Date.now() - started}ms`);
       return json({ ok: true, query: q, results, engine: "edge-bing+ddg" });
     }
 
     if ((path === "/v1/chat/completions" || path === "/v2/chat/completions" || path === "/chat/completions" || path === "/v1/free/chat/completions") && req.method === "POST") {
       const body = await req.json().catch(() => ({}));
       const out = await chatCompletion(env, body);
-      console.log(`[atlas-proxy] POST ${path} ${out.status} engine=${out.body?.atlas_engine || "n/a"} ${Date.now() - started}ms`);
+      console.log(`[gateway] POST ${path} ${out.status} engine=${out.body?.atlas_engine || "n/a"} ${Date.now() - started}ms`);
       // Phase E: meter this request (fire-and-forget — never block the response).
       const id = resolveIdentity(req, env);
       if (id?.key && out.status < 500) recordUsage(env, id.key, estimateTokens(body)).catch(() => {});
@@ -851,7 +851,7 @@ export default {
     if ((path === "/v1/images/generations" || path === "/v2/images/generations") && req.method === "POST") {
       const body = await req.json().catch(() => ({}));
       const out = await imageGeneration(env, body);
-      console.log(`[atlas-proxy] POST /v1/images/generations ${out.status} ${Date.now() - started}ms`);
+      console.log(`[gateway] POST /v1/images/generations ${out.status} ${Date.now() - started}ms`);
       return json(out.body, out.status);
     }
     if ((path === "/v1/audio/speech" || path === "/v2/audio/speech") && req.method === "POST") {
@@ -865,19 +865,19 @@ export default {
     if (["/v1/media/inspect", "/v2/media/inspect", "/v1/images/edits", "/v2/images/edits", "/v1/video/process", "/v2/video/process", "/v1/audio/process", "/v2/audio/process", "/v1/media/transcribe", "/v2/media/transcribe", "/v1/media/remove-background", "/v2/media/remove-background", "/v1/media/ocr", "/v2/media/ocr", "/v1/media/qr", "/v2/media/qr", "/v1/media/palette", "/v2/media/palette", "/v1/media/face-blur", "/v2/media/face-blur", "/v1/media/color-isolate", "/v2/media/color-isolate", "/v1/media/vision", "/v2/media/vision", "/v1/media/generative-edit", "/v2/media/generative-edit"].includes(path) && req.method === "POST") {
       const body = await req.json().catch(() => ({}));
       const out = await mediaForward(env, path, body);
-      console.log(`[atlas-proxy] POST ${path} ${out.status} ${Date.now() - started}ms`);
+      console.log(`[gateway] POST ${path} ${out.status} ${Date.now() - started}ms`);
       return json(out.body, out.status);
     }
     // Arsenal tools relay → Atlas VPS → atlas-tools (75 local tools, 24/7).
     if (path === "/v1/arsenal" && req.method === "GET") {
       const out = await arsenalForward(env, path, "GET");
-      console.log(`[atlas-proxy] GET /v1/arsenal ${out.status} ${Date.now() - started}ms`);
+      console.log(`[gateway] GET /v1/arsenal ${out.status} ${Date.now() - started}ms`);
       return json(out.body, out.status);
     }
     if (path === "/v1/arsenal/run" && req.method === "POST") {
       const body = await req.json().catch(() => ({}));
       const out = await arsenalForward(env, path, "POST", body);
-      console.log(`[atlas-proxy] POST /v1/arsenal/run ${out.status} ${Date.now() - started}ms`);
+      console.log(`[gateway] POST /v1/arsenal/run ${out.status} ${Date.now() - started}ms`);
       return json(out.body, out.status);
     }
     if (/^\/v1\/arsenal\/[^/]+$/.test(path) && req.method === "GET") {
@@ -889,35 +889,35 @@ export default {
     // Command Center). Auth passed through (worker injects ATLAS_PROXY_KEY).
     if (path === "/v1/automations/status" && req.method === "GET") {
       const out = await automationsForward(env, "/health", "GET");
-      console.log(`[atlas-proxy] GET /v1/automations/status ${out.status} ${Date.now() - started}ms`);
+      console.log(`[gateway] GET /v1/automations/status ${out.status} ${Date.now() - started}ms`);
       return json(out.body, out.status);
     }
     if (path.startsWith("/v1/automations")) {
       const vpsPath = "/api/automations" + path.slice("/v1/automations".length);
       const body = (req.method === "POST" || req.method === "PUT") ? await req.json().catch(() => ({})) : undefined;
       const out = await automationsForward(env, vpsPath, req.method, body);
-      console.log(`[atlas-proxy] ${req.method} ${path} -> ${vpsPath} ${out.status} ${Date.now() - started}ms`);
+      console.log(`[gateway] ${req.method} ${path} -> ${vpsPath} ${out.status} ${Date.now() - started}ms`);
       return json(out.body, out.status);
     }
     // Bot + agent bridge relay → VPS-1 :8793 (43 bots + 20 agents, 24/7).
     // Auth injected by the worker (ATLAS_PROXY_KEY), same contract as arsenal.
     if (path === "/v1/bots" && req.method === "GET") {
       const out = await botBridgeForward(env, path, "GET");
-      console.log(`[atlas-proxy] GET /v1/bots ${out.status} ${Date.now() - started}ms`);
+      console.log(`[gateway] GET /v1/bots ${out.status} ${Date.now() - started}ms`);
       return json(out.body, out.status);
     }
     if (path === "/v1/agents" && req.method === "GET") {
       const out = await botBridgeForward(env, path, "GET");
-      console.log(`[atlas-proxy] GET /v1/agents ${out.status} ${Date.now() - started}ms`);
+      console.log(`[gateway] GET /v1/agents ${out.status} ${Date.now() - started}ms`);
       return json(out.body, out.status);
     }
     if (path.startsWith("/v1/bots")) {
       const body = (req.method === "POST") ? await req.json().catch(() => ({})) : undefined;
       const out = await botBridgeForward(env, path, req.method, body);
-      console.log(`[atlas-proxy] ${req.method} ${path} ${out.status} ${Date.now() - started}ms`);
+      console.log(`[gateway] ${req.method} ${path} ${out.status} ${Date.now() - started}ms`);
       return json(out.body, out.status);
     }
-    console.log(`[atlas-proxy] ${req.method} ${path} 404`);
+    console.log(`[gateway] ${req.method} ${path} 404`);
     return json({ error: { message: "not_found" } }, 404);
   },
 };
