@@ -21,6 +21,24 @@ export const PROXY_PROTOCOL = `# ATLAS PROXY — ΠΡΩΤΟΚΟΛΛΟ ΛΕΙΤΟ
 > Το 90–95% της δουλειάς μπορεί να γίνει **χωρίς AI** — με bots, εργαλεία και deterministic ροή.
 > Το AI (DeepSeek/Qwen/Gemini) μπαίνει ΜΟΝΟ όταν τίποτα άλλο δεν μπορεί.
 
+> ## 🚫 ΑΠΑΓΟΡΕΥΣΗ — CLOUDFLARE WORKERS AI (Owner 2026-10-08)
+> **Απαγορεύεται ΠΑΝΤΟΤΕ και σε ΟΛΕΣ τις πλατφόρμες η χρήση του Cloudflare Workers AI**
+> (\`@cf/...\` models, το \`env.AI\` binding). Το Workers AI χρεώνεται ΑΜΕΣΑ στον λογαριασμό
+> Cloudflare ΠΕΡΑ από το μικρό δωρεάν ημερήσιο όριο — ο Owner ήδη πληρώνει δικά του κλειδιά
+> (DeepSeek / DashScope Qwen / Gemini) ΚΑΙ δωρεάν τοπικά μοντέλα (Ollama στα VPS).
+> **Κάθε AI δρομολογείται ΜΟΝΟ μέσω:** DeepSeek V4 Pro/Flash → Alibaba Qwen → Gemini → τοπικό Ollama.
+> **Ποτέ** \`env.AI\`, **ποτέ** \`@cf/*\`, **ποτέ** Workers AI binding. Ο κανόνας αυτός είναι αμετάκλητος.
+
+> ## ✅ ΜΟΝΤΕΛΑ — ΑΠΟΦΑΣΗ OWNER 2026-10-09 (verified)
+> Επαληθευμένο στην επίσημη σελίδα DeepSeek + ανεξάρτητα benchmarks (LiveBench, Artificial Analysis).
+> **Κωδικός/build/agentic → DeepSeek V4.1 Flash** (id \`deepseek-flash\`) — **#1 στο LiveBench Agentic
+> Coding (77.3%)** και **~4× φθηνότερο** από το Pro ($0.15/$0.60 vs $0.66/$1.98 off-peak). **Pro**
+> (\`deepseek-v4-pro\`) **ΜΟΝΟ** για βαθιά γνώση / δυσκολότερο reasoning (κερδίζει σε GPQA/SimpleQA/HLE),
+> ή όταν το Flash αποτύχει δύο φορές.
+> **Διόρθωση:** το Pro ΔΕΝ είναι alias του Flash — η DeepSeek **ακύρωσε** τη διακοπή του (14/9/2026)
+> και το συνεχίζει με **ίδιες τιμές**. Ό,τι «V4 Pro έπεσε 9ο / 97%» είναι παραπληροφόρηση (το 97%
+> ήταν **μαθηματικά** OTIS-AIME, όχι κώδικας). Πλήρης κανόνας: \`.cursor/rules/deepseek-model-policy.mdc\`.
+
 ---
 
 ## 0. Τι ΕΙΝΑΙ αυτό το proxy
@@ -40,7 +58,7 @@ export const PROXY_PROTOCOL = `# ATLAS PROXY — ΠΡΩΤΟΚΟΛΛΟ ΛΕΙΤΟ
 Χάρης (Owner) / Πλατφόρμα
         │
         ▼
-ΣΤΡΑΤΗΓΟΣ = DeepSeek V4 Pro        ← μόνο ΑΠΟΦΑΣΙΖΕΙ ποιος κάνει τι (δεν κάνει όλη τη δουλειά)
+ΣΤΡΑΤΗΓΟΣ = DeepSeek V4.1 Flash    ← ΑΠΟΦΑΣΙΖΕΙ ποιος κάνει τι + γράφει κώδικα (Pro = βαθιά γνώση μόνο)
         │
         ▼
 COLONELS = 20 Agents (fleet)        ← build / QA / security / research / browser / deploy / git …
@@ -49,7 +67,7 @@ COLONELS = 20 Agents (fleet)        ← build / QA / security / research / brows
 SOLDIERS = 43 Bots + 75 Εργαλεία    ← DETERMINISTIC, ΜΗΔΕΝ tokens (sweep + build + crawl + QA)
         │  (το φτηνό μέρος γίνεται εδώ)
         ▼
-ΔΩΡΕΑΝ AI (τοπικό Ollama / Workers AI)  ← 0 οριακό κόστος (πάνω σε ήδη-πληρωμένο compute)
+ΔΩΡΕΑΝ AI (τοπικό Ollama στα VPS)  ← 0 οριακό κόστος (πάνω σε ήδη-πληρωμένο compute)
         │
         ▼
 PAID AI (DeepSeek Flash → Pro → Qwen → Gemini)  ← ΜΟΝΟ ό,τι δεν μπορεί τίποτα άλλο
@@ -57,7 +75,7 @@ PAID AI (DeepSeek Flash → Pro → Qwen → Gemini)  ← ΜΟΝΟ ό,τι δε�
 
 **Κανόνας οικονομίας (economy ladder):**
 1. **Bots / εργαλεία / deterministic generator** — πάντα πρώτα. 0 tokens.
-2. **Δωρεάν AI** (Workers AI \`@cf/qwen/qwen3-30b-a3b-fp8\`, τοπικό Ollama) — δεύτερο.
+2. **Δωρεάν AI** (τοπικό Ollama στα VPS — qwen3/phi4-mini/gemma3) — δεύτερο. (Ποτέ Workers AI.)
 3. **DeepSeek Flash** (φτηνό) — για routine text/extraction.
 4. **DeepSeek Pro / Qwen / Gemini** — τελευταίο, μόνο για βαρύ reasoning / media.
 
@@ -88,8 +106,8 @@ PAID AI (DeepSeek Flash → Pro → Qwen → Gemini)  ← ΜΟΝΟ ό,τι δε�
 | Crawl σελίδας → Markdown | \`tool: crawl4ai / arsenal\` | ❌ |
 | FFmpeg / OCR / QR / face-blur | \`/v1/media/*\` → VPS-1 | ❌ |
 | Search (news, prices, leads) | \`/v1/search\` (edge Bing+DDG) | ❌ |
-| Απλό chat / ερώτηση | Workers AI (free) → DeepSeek Flash | ✅ ελάχιστο |
-| Γράψιμο κώδικα / build app | DeepSeek V4 Pro (thinking) | ✅ paid |
+| Απλό chat / ερώτηση | DeepSeek Flash → Qwen Flash (ποτέ Workers AI) | ✅ ελάχιστο |
+| Γράψιμο κώδικα / build app | DeepSeek V4.1 Flash (thinking) — Pro μόνο για βαθύ reasoning | ✅ paid |
 | Εικόνα / βίντεο / φωνή | Qwen (image) / Azure+Edge (TTS) | ✅ paid ή free |
 
 **Το σωστό πρώτο βήμα είναι ΠΑΝΤΑ: "μπορεί bot/tool να το κάνει;"** — όχι "στείλε το στο LLM".
@@ -117,7 +135,7 @@ PAID AI (DeepSeek Flash → Pro → Qwen → Gemini)  ← ΜΟΝΟ ό,τι δε�
 | \`/v1/protocol\` | GET | ❌ | **αυτό το protocol** |
 | \`/v1/tasks\` | GET | ❌ | deterministic task registry (bot/tool → 0 tokens) |
 | \`/v1/usage\` | GET | ✅ | per-key χρήση σήμερα (requests/tokens) + quota — Φάση Ε |
-| \`/v1/chat/completions\` | POST | ✅ | chat (free-first → DeepSeek → Qwen → Gemini) |
+| \`/v1/chat/completions\` | POST | ✅ | chat (DeepSeek → Qwen → Gemini — ποτέ Workers AI) |
 | \`/v1/images/generations\` | POST | ✅ | Qwen image (→ VPS-1) |
 | \`/v1/audio/speech\` | POST | ✅ | TTS (Azure Ava/Athina → Edge free) |
 | \`/v1/search\` | GET/POST | ✅ | edge web search (Bing + DDG + Mojeek + Qwant) |
@@ -129,7 +147,7 @@ PAID AI (DeepSeek Flash → Pro → Qwen → Gemini)  ← ΜΟΝΟ ό,τι δε�
 
 ## 6. FAILOVER — ΠΟΤΕ ΔΕΝ ΠΕΦΤΕΙ ΠΛΑΤΦΟΡΜΑ
 
-- **Chat:** Workers AI (free) → DeepSeek → Alibaba Qwen → Gemini. Αν όλα πέσουν → 502
+- **Chat:** DeepSeek → Alibaba Qwen → Gemini (ποτέ Workers AI). Αν όλα πέσουν → 502
   \`all_ai_routes_failed\` (Η platform το δείχνει, ΔΕΝ κρεμάει σιωπηλά).
 - **TTS:** Azure → Edge TTS (VPS) → 502. Ποτέ δεν μένει χωρίς φωνή όσο το VPS είναι πάνω.
 - **Media/Image:** Cloudflare ΔΕΝ τρέχει FFmpeg → πάει στο VPS-1 (μεγάλο timeout 300s).
@@ -142,10 +160,10 @@ PAID AI (DeepSeek Flash → Pro → Qwen → Gemini)  ← ΜΟΝΟ ό,τι δε�
 - Δεν εκθέτει κλειδιά/headers. Auth = bearer, μόνο σύγκριση, ποτέ log.
 - Δεν τρέχει FFmpeg/Docker/filesystem στο edge — τα στέλνει στο VPS.
 - Δεν κάνει image/βίντεο-gen στο free chat model.
-- Δεν κρύβει το πραγματικό \`atlas_engine\` (workers-ai / deepseek / alibaba / gemini) στην απάντηση.
-- Δεν υπόσχεται "δωρεάν υποδομή": Workers AI/Ollama τρέχουν πάνω σε **ήδη-πληρωμένο** compute
-  (Cloudflare Paid standard + 2 Hetzner VPS + domains). "0 tokens" = 0 οριακό κόστος ανά εργασία,
-  ΟΧΙ δωρεάν υποδομή.
+- Δεν κρύβει το πραγματικό \`atlas_engine\` (deepseek / alibaba / gemini) στην απάντηση.
+- Δεν χρησιμοποιεί ΠΟΤΕ Cloudflare Workers AI (\`@cf/*\`) — ΑΠΑΓΟΡΕΥΜΕΝΟ από τον Owner (2026-10-08).
+- Δεν υπόσχεται "δωρεάν υποδομή": το τοπικό Ollama τρέχει πάνω σε **ήδη-πληρωμένο** compute
+  (2 Hetzner VPS). "0 tokens" = 0 οριακό κόστος ανά εργασία, ΟΧΙ δωρεάν υποδομή.
 
 ## 8. ROADMAP (φάσεις — ζωντανή κατάσταση)
 

@@ -3,7 +3,7 @@
  * ------------------------------------------------------------
  * Owner Χάρης (2026-10-04): "πολλές πλατφόρμες μπορεί να μην χρειάζονται ΚΑΝ AI".
  *
- * Before any request reaches the AI ladder (Workers AI → DeepSeek → Qwen → Gemini),
+ * Before any request reaches the AI ladder (DeepSeek → Qwen → Gemini — never Workers AI),
  * we check: can a bot / tool / deterministic endpoint do this job with ZERO tokens?
  * If yes → route deterministically. The LLM is the LAST resort, never the first.
  *

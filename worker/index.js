@@ -5,10 +5,10 @@
  * the VPS proxy, but it runs on Cloudflare's edge so EVERY platform (Perplexity,
  * NovaDevs, and every future one) reaches it over HTTPS with one proxy key.
  *
- * Free-first routing (Owner 2026-09-18):
- *   chat:  Cloudflare Workers AI (@cf/qwen/qwen3-30b-a3b-fp8, FREE) → DeepSeek
- *          V4 Pro → Alibaba Qwen → Gemini (paid only as last resort)
- *   image: Alibaba Qwen Image
+ * Routing (Owner 2026-10-08 — Workers AI FORBIDDEN):
+ *   chat:  DeepSeek V4 Pro → Alibaba Qwen → Gemini (owner keys only — never
+ *          Cloudflare Workers AI, which is PAID and bills the account directly)
+ *   image: Alibaba Qwen Image (via VPS)
  *   audio: Azure neural TTS (Ava/Athina, multi-language)
  *
  * Endpoints: /health, /v1/models, /v1/chat/completions, /v1/images/generations,
@@ -19,7 +19,6 @@ import { PROXY_PROTOCOL, PROXY_PROTOCOL_VERSION } from "./protocol.js";
 import { DETERMINISTIC_TASKS, detectDeterministicTask } from "./deterministic.js";
 import { fetchWithRetry, quotaFor, recordUsage, readUsage, estimateTokens } from "./scaling.js";
 
-const FREE_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8"; // Cloudflare Workers AI (free tier)
 const DEEPSEEK = "https://api.deepseek.com";
 const DEEPSEEK_MODEL = "deepseek-v4-pro";
 const ALIBABA_CHAT = "https://dashscope-intl.aliyuncs.com/compatible-mode";
@@ -250,23 +249,7 @@ function applyEmpathy(messages) {
 }
 // localization-skip:end
 
-// ── AI routes (free-first) ────────────────────────────────────────────────
-async function workersAiChat(env, messages) {
-  if (!env.AI) return null;
-  try {
-    const inputs = {
-      messages: messages.map((m) => ({
-        role: m.role === "assistant" ? "assistant" : m.role === "system" ? "system" : "user",
-        content: typeof m.content === "string" ? m.content.slice(0, 8000) : String(m.content || "").slice(0, 8000),
-      })),
-    };
-    const out = await env.AI.run(FREE_MODEL, inputs);
-    const content = typeof out === "string" ? out : out?.response;
-    return content ? { content: String(content).trim(), engine: "workers-ai", model: FREE_MODEL, finishReason: "stop" } : null;
-  } catch {
-    return null;
-  }
-}
+// ── AI routes (owner keys only — no Cloudflare Workers AI) ────────────────
 
 // Normalize caller model aliases to real DeepSeek ids. Perplexity/NovaDevs send
 // "standard" (or omit it); the DeepSeek API only accepts deepseek-v4-pro /
@@ -350,12 +333,12 @@ async function chatCompletion(env, body) {
   const thinking = body?.thinking?.type === "enabled";
   const opts = { jsonMode, thinking, maxTokens: body?.max_tokens, temperature: body?.temperature, model: body?.model };
 
-  // Build/long-form detection (Owner 2026-09-18): the free Workers AI model
-  // truncates long code and reports finish_reason "stop" (so the continuation
-  // loop never fires and the user gets a HALF app). For build/code/app/game
-  // requests we skip the free tier and go straight to DeepSeek V4 Pro, which
-  // reports finish_reason="length" correctly and lets the loop keep writing
-  // until the artifact is complete.
+  // Build/long-form detection (Owner 2026-09-18): cheap models truncate long
+  // code and report finish_reason "stop" (so the continuation loop never fires
+  // and the user gets a HALF app). For build/code/app/game requests we skip the
+  // cheap tier and go straight to DeepSeek V4 Pro, which reports
+  // finish_reason="length" correctly and lets the loop keep writing until the
+  // artifact is complete.
   const lastUser = [...baseMessages].reverse().find((m) => m.role === "user");
   const lastText = typeof lastUser?.content === "string" ? lastUser.content : "";
   // NOTE: JavaScript \b is ASCII-only, so Greek build words must be matched as
@@ -406,12 +389,13 @@ async function chatCompletion(env, body) {
   let full = "", engine = null, model = null, finishReason = "stop";
   for (let i = 0; i <= MAX_CONTINUATIONS; i++) {
     const batch = i === 0 ? baseMessages : [...baseMessages, { role: "assistant", content: full }, { role: "user", content: "Continue exactly where you left off. Do not repeat anything already written." }];
-    const route = thinking
-      ? await deepseekChat(env, batch, opts)
-      : (wantsBuild ? null : await workersAiChat(env, batch))
-        ?? await deepseekChat(env, batch, opts)
-        ?? await alibabaChat(env, batch)
-        ?? await geminiChat(env, batch);
+    // Owner 2026-10-08: Workers AI (@cf/…) is PAID beyond the tiny daily free
+    // quota and billed the Cloudflare account directly. The owner has his own
+    // AI keys (DeepSeek/Qwen/Gemini), so chat routes ONLY through those — never
+    // through Cloudflare Workers AI again.
+    const route = await deepseekChat(env, batch, opts)
+      ?? await alibabaChat(env, batch)
+      ?? await geminiChat(env, batch);
     if (!route) break;
     engine = route.engine;
     model = route.model;
@@ -636,7 +620,7 @@ const CAPABILITIES = {
     local: { name: "Owner PC (builder)", availability: "only while the PC is on", note: "primary cockpit/builder — agents+bots run 24/7 on VPS (bot-bridge :8793)" },
   },
   abilities: {
-    chat: { tier: ["edge", "vps"], freeFirst: true, route: "Workers AI (free) → DeepSeek V4 Pro → Qwen → Gemini", endpoint: "/v1/chat/completions" },
+    chat: { tier: ["edge", "vps"], freeFirst: false, route: "DeepSeek V4 Pro → Qwen → Gemini (owner keys — never Workers AI)", endpoint: "/v1/chat/completions" },
     tts: { tier: ["edge", "vps"], freeFirst: true, route: "Azure Ava/Athina → Edge TTS (free)", endpoint: "/v1/audio/speech" },
     image: { tier: ["vps"], route: "Qwen Image", endpoint: "/v1/images/generations" },
     media: { tier: ["vps"], route: "FFmpeg edit/video/audio", endpoint: "/v1/images/edits · /v1/video/process · /v1/audio/process" },

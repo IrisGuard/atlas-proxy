@@ -1,6 +1,6 @@
 {
   "name": "Atlas AI Proxy (Cloudflare Worker)",
-  "description": "OpenAI-compatible AI gateway (free-first routing: Cloudflare Workers AI -> DeepSeek -> Qwen -> Gemini) + Azure TTS. Backend API service, no public website.",
+  "description": "OpenAI-compatible AI gateway (routing: DeepSeek -> Qwen -> Gemini, owner keys only — Cloudflare Workers AI is FORBIDDEN) + Azure TTS. Backend API service, no public website.",
   "source": "cloudflare-worker",
   "backend": true,
   "createdAt": "2026-09-18T06:00:00.000Z",

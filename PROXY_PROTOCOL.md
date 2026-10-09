@@ -8,6 +8,15 @@
 **Source of truth:** `worker/protocol.js` (served live at `GET /v1/protocol`). Keep this file in sync with it.
 Contract version: `2026.10.05-r5` · Repo: `IrisGuard/atlas-proxy`.
 
+> ## ✅ ΜΟΝΤΕΛΑ — ΑΠΟΦΑΣΗ OWNER 2026-10-09 (verified)
+> Επαληθευμένο στην επίσημη σελίδα DeepSeek + ανεξάρτητα benchmarks (LiveBench, Artificial Analysis).
+> **Κωδικός/build/agentic → DeepSeek V4.1 Flash** (id `deepseek-flash`) — **#1 στο LiveBench Agentic
+> Coding (77.3%)** και **~4× φθηνότερο** από το Pro ($0.15/$0.60 vs $0.66/$1.98 off-peak). **Pro**
+> (`deepseek-v4-pro`) **ΜΟΝΟ** για βαθιά γνώση / δυσκολότερο reasoning (κερδίζει σε GPQA/SimpleQA/HLE),
+> ή όταν το Flash αποτύχει δύο φορές. **Διόρθωση:** το Pro ΔΕΝ είναι alias του Flash — η DeepSeek
+> **ακύρωσε** τη διακοπή του (14/9/2026) και το συνεχίζει με **ίδιες τιμές**· το «97%» ήταν **μαθηματικά**
+> OTIS-AIME, όχι κώδικας. Πλήρης κανόνας: `.cursor/rules/deepseek-model-policy.mdc`.
+
 ---
 
 ## 0. Τι ΕΙΝΑΙ αυτό το proxy
@@ -27,7 +36,7 @@ Contract version: `2026.10.05-r5` · Repo: `IrisGuard/atlas-proxy`.
 Χάρης (Owner) / Πλατφόρμα
         │
         ▼
-ΣΤΡΑΤΗΓΟΣ = DeepSeek V4 Pro        ← μόνο ΑΠΟΦΑΣΙΖΕΙ ποιος κάνει τι (δεν κάνει όλη τη δουλειά)
+ΣΤΡΑΤΗΓΟΣ = DeepSeek V4.1 Flash    ← ΑΠΟΦΑΣΙΖΕΙ ποιος κάνει τι + γράφει κώδικα (Pro = βαθιά γνώση μόνο)
         │
         ▼
 COLONELS = 20 Agents (fleet)        ← build / QA / security / research / browser / deploy / git …
@@ -76,7 +85,7 @@ PAID AI (DeepSeek Flash → Pro → Qwen → Gemini)  ← ΜΟΝΟ ό,τι δε�
 | FFmpeg / OCR / QR / face-blur | `/v1/media/*` → VPS-1 | ❌ |
 | Search (news, prices, leads) | `/v1/search` (edge Bing+DDG) | ❌ |
 | Απλό chat / ερώτηση | Workers AI (free) → DeepSeek Flash | ✅ ελάχιστο |
-| Γράψιμο κώδικα / build app | DeepSeek V4 Pro (thinking) | ✅ paid |
+| Γράψιμο κώδικα / build app | DeepSeek V4.1 Flash (thinking) — Pro μόνο για βαθύ reasoning | ✅ paid |
 | Εικόνα / βίντεο / φωνή | Qwen (image) / Azure+Edge (TTS) | ✅ paid ή free |
 
 **Το σωστό πρώτο βήμα είναι ΠΑΝΤΑ: "μπορεί bot/tool να το κάνει;"** — όχι "στείλε το στο LLM".
