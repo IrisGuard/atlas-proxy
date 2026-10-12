@@ -12,7 +12,7 @@
  * Keep worker/protocol.js and PROXY_PROTOCOL.md IN SYNC. Bump §contract_version
  * only on an explicit Owner unlock of the frozen contract.
  */
-export const PROXY_PROTOCOL_VERSION = "2026.10.05-r5";
+export const PROXY_PROTOCOL_VERSION = "2026.10.12-r6";
 
 export const PROXY_PROTOCOL = `# ATLAS PROXY — ΠΡΩΤΟΚΟΛΛΟ ΛΕΙΤΟΥΡΓΙΑΣ
 
@@ -28,6 +28,15 @@ export const PROXY_PROTOCOL = `# ATLAS PROXY — ΠΡΩΤΟΚΟΛΛΟ ΛΕΙΤΟ
 > (DeepSeek / DashScope Qwen / Gemini) ΚΑΙ δωρεάν τοπικά μοντέλα (Ollama στα VPS).
 > **Κάθε AI δρομολογείται ΜΟΝΟ μέσω:** DeepSeek V4 Pro/Flash → Alibaba Qwen → Gemini → τοπικό Ollama.
 > **Ποτέ** \`env.AI\`, **ποτέ** \`@cf/*\`, **ποτέ** Workers AI binding. Ο κανόνας αυτός είναι αμετάκλητος.
+
+> ## 🔒 ΑΠΑΓΟΡΕΥΣΗ — ΤΟ EMAIL ΤΗΣ NOVA CONSOLE ΔΕΝ ΜΠΑΙΝΕΙ ΠΟΤΕ ΣΕ OUTREACH (Owner 2026-10-12)
+> **\`noreply@offersnova.com\`** = ο **αποκλειστικός transactional αποστολέας της Nova Console**
+> (ειδοποιήσεις πληρωμών/ΦΠΑ, alerts του guard). **ΑΠΑΓΟΡΕΥΕΤΑΙ** σε cold outreach / campaigns /
+> Nova Outreach — αν «καεί» το domain, **χάνονται οι ειδοποιήσεις πληρωμών → κίνδυνος εφορίας**.
+> **\`support@novaecosystem.live\`** = **ΜΟΝΟ παραλήπτης** (ποτέ αποστολέας, ποτέ outreach).
+> Το **Nova Outreach** στέλνει **ΑΠΟΚΛΕΙΣΤΙΚΑ** από τα απομονωμένα υπο-domains
+> **\`m1..m10.offersnova.com\`**. Αν ένα υπο-domain καεί → φτιάχνουμε **άλλο** — **ΠΟΤΕ** fallback
+> στο email της Console. Ισχύει σε **ΟΛΕΣ** τις πλατφόρμες (κεντρικό Atlas protocol §0m).
 
 > ## ✅ ΜΟΝΤΕΛΑ — ΑΠΟΦΑΣΗ OWNER 2026-10-09 (verified)
 > Επαληθευμένο στην επίσημη σελίδα DeepSeek + ανεξάρτητα benchmarks (LiveBench, Artificial Analysis).

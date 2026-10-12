@@ -6,7 +6,16 @@
 > Το AI (DeepSeek/Qwen/Gemini) μπαίνει ΜΟΝΟ όταν τίποτα άλλο δεν μπορεί.
 
 **Source of truth:** `worker/protocol.js` (served live at `GET /v1/protocol`). Keep this file in sync with it.
-Contract version: `2026.10.05-r5` · Repo: `IrisGuard/atlas-proxy`.
+Contract version: `2026.10.12-r6` · Repo: `IrisGuard/atlas-proxy`.
+
+> ## 🔒 ΑΠΑΓΟΡΕΥΣΗ — ΤΟ EMAIL ΤΗΣ NOVA CONSOLE ΔΕΝ ΜΠΑΙΝΕΙ ΠΟΤΕ ΣΕ OUTREACH (Owner 2026-10-12)
+> **`noreply@offersnova.com`** = ο **αποκλειστικός transactional αποστολέας της Nova Console**
+> (ειδοποιήσεις πληρωμών/ΦΠΑ, alerts του guard). **ΑΠΑΓΟΡΕΥΕΤΑΙ** σε cold outreach / campaigns /
+> Nova Outreach — αν «καεί» το domain, **χάνονται οι ειδοποιήσεις πληρωμών → κίνδυνος εφορίας**.
+> **`support@novaecosystem.live`** = **ΜΟΝΟ παραλήπτης** (ποτέ αποστολέας, ποτέ outreach).
+> Το **Nova Outreach** στέλνει **ΑΠΟΚΛΕΙΣΤΙΚΑ** από τα απομονωμένα υπο-domains
+> **`m1..m10.offersnova.com`**. Αν ένα υπο-domain καεί → φτιάχνουμε **άλλο** — **ΠΟΤΕ** fallback
+> στο email της Console. Ισχύει σε **ΟΛΕΣ** τις πλατφόρμες (κεντρικό Atlas protocol §0m).
 
 > ## ✅ ΜΟΝΤΕΛΑ — ΑΠΟΦΑΣΗ OWNER 2026-10-09 (verified)
 > Επαληθευμένο στην επίσημη σελίδα DeepSeek + ανεξάρτητα benchmarks (LiveBench, Artificial Analysis).
